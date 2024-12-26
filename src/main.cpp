@@ -21,6 +21,7 @@
 
 #include "stb_image.h"
 #include "stb_image_resize2.h"
+#include "ini.h"
 
 // #include "image_io.hpp"
 #include "bezier.hpp"
@@ -67,7 +68,7 @@ int main(int argc, char** argv) {
 
     // Create window with SDL_Renderer graphics context
     SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
-    SDL_Window* window = SDL_CreateWindow("Dear ImGui SDL2+SDL_Renderer example", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 640, 480, window_flags);
+    SDL_Window* window = SDL_CreateWindow("IMG2DISP", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 640, 480, window_flags);
     if (window == nullptr)  {printf("Error: SDL_CreateWindow(): %s\n", SDL_GetError());return -1;}
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_ACCELERATED);
     if (renderer == nullptr){SDL_Log("Error creating SDL_Renderer!");                  return -1;}
@@ -95,9 +96,10 @@ int main(int argc, char** argv) {
 
 
     // Constants
-    static const char* i2d_output_type_alist[] = { "Binary (*.bin)", "C array (*.c)"};
-    static const char* i2d_scan_mode_alist[]   = { "Horizontal Scan", "Vertical Scan", "Data Hor, Byte Ver", "Data Ver, Byte Hor"};
-    static const char* i2d_bpp_alist[]         = { "Monochrome", "4-Color", "16-Color"};
+    static const char* i2d_output_type_alist[]   = { "C array (*.c)"};
+    static const char* i2d_scan_mode_alist[]     = { "Horizontal Scan", "Vertical Scan", "Data Hor, Byte Ver", "Data Ver, Byte Hor"};
+    static const char* i2d_bpp_alist[]           = { "Monochrome", "4-Index"};
+    static const char* i2d_resize_method_alist[] = { "Fit", "Fit Height", "Fit Width", "Stretch", "Center", "Tile"};
 
     // Temporary States
     SDL_Texture* tex_raw;
@@ -129,23 +131,20 @@ int main(int argc, char** argv) {
 
     // Saved States
     bool i2d_include_header = true;
-    bool i2d_antitone_byte  = false;
+    bool i2d_byte_invert  = false;
     bool i2d_r2l_scan       = false;
     bool i2d_b2t_scan       = false;
     bool i2d_msb_first      = false;
     int  i2d_output_type = 0;
     int  i2d_scan_mode   = 0;
     int  i2d_bpp_mode    = 0;
-
+    int  i2d_resize_method = 0;
+    int  i2d_target_size[2] = {1,1};
 
     // Main loop
     bool done = false;
     while (!done) {
         // Poll and handle events (inputs, window resize, etc.)
-        // You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
-        // - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application, or clear/overwrite your copy of the mouse data.
-        // - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application, or clear/overwrite your copy of the keyboard data.
-        // Generally you may always pass all inputs to dear imgui, and hide them from your application based on those two flags.
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL2_ProcessEvent(&event);
@@ -193,8 +192,37 @@ int main(int argc, char** argv) {
                     if (ImGui::MenuItem("Export Data", "Ctrl+S"))   { /* Do stuff */ }
                     ImGui::Separator();
                     // Configurations
-                    if (ImGui::MenuItem("Save Config", NULL))   { /* Do stuff */ }
-                    if (ImGui::MenuItem("Load Config", NULL))   { /* Do stuff */ }
+                    if (ImGui::MenuItem("Save Config", NULL))   {
+                        // Write config.ini
+                        mINI::INIFile file("config.ini");
+                        mINI::INIStructure ini;
+                        ini["Settings"]["IncludeHeader"]   = std::to_string(i2d_include_header);
+                        ini["Settings"]["ByteInvert"]      = std::to_string(i2d_byte_invert);
+                        ini["Settings"]["RightToLeftScan"] = std::to_string(i2d_r2l_scan);
+                        ini["Settings"]["BottomToTopScan"] = std::to_string(i2d_b2t_scan);
+                        ini["Settings"]["OutputType"]      = std::to_string(i2d_output_type);
+                        ini["Settings"]["ScanMode"]        = std::to_string(i2d_scan_mode);
+                        ini["Settings"]["ResizeMethod"]    = std::to_string(i2d_resize_method);
+                        ini["Settings"]["TargetWidth"]     = std::to_string(i2d_target_size[0]);
+                        ini["Settings"]["TargetHeight"]    = std::to_string(i2d_target_size[1]);
+                        file.write(ini);
+
+                     }
+                    if (ImGui::MenuItem("Load Config", NULL))   {
+                        // Read config.ini
+                        mINI::INIFile file("config.ini");
+                        mINI::INIStructure ini;
+                        file.read(ini);
+                        i2d_include_header = std::stoi(ini["Settings"]["IncludeHeader"]);
+                        i2d_byte_invert    = std::stoi(ini["Settings"]["ByteInvert"]);
+                        i2d_r2l_scan       = std::stoi(ini["Settings"]["RightToLeftScan"]);
+                        i2d_b2t_scan       = std::stoi(ini["Settings"]["BottomToTopScan"]);
+                        i2d_output_type    = std::stoi(ini["Settings"]["OutputType"]);
+                        i2d_scan_mode      = std::stoi(ini["Settings"]["ScanMode"]);
+                        i2d_resize_method  = std::stoi(ini["Settings"]["ResizeMethod"]);
+                        i2d_target_size[0] = std::stoi(ini["Settings"]["TargetWidth"]);
+                        i2d_target_size[1] = std::stoi(ini["Settings"]["TargetHeight"]);
+                    }
                     ImGui::Separator();
                     if (ImGui::MenuItem("Exit", "Ctrl+W"))  { done = true; }
                     ImGui::EndMenu();
@@ -232,35 +260,29 @@ int main(int argc, char** argv) {
             ImGui::SetColumnWidth(0, 200);
                                     
             ImGui::SeparatorText("Pixel Format Control");
-            ImGui::Text("Output Type");
-            ImGui::Combo("##OT", &i2d_output_type, i2d_output_type_alist, IM_ARRAYSIZE(i2d_output_type_alist));
             ImGui::Text("Scan Mode");
             ImGui::Combo("##SM", &i2d_scan_mode, i2d_scan_mode_alist, IM_ARRAYSIZE(i2d_scan_mode_alist));
-            ImGui::Text("Bits Per Pixel");
-            ImGui::Combo("##BPP", &i2d_bpp_mode, i2d_bpp_alist, IM_ARRAYSIZE(i2d_bpp_alist));
+            // ImGui::Text("Bits Per Pixel");
+            // ImGui::Combo("##BPP", &i2d_bpp_mode, i2d_bpp_alist, IM_ARRAYSIZE(i2d_bpp_alist));
 
-            ImGui::Checkbox("Include Header", &i2d_include_header);
-            ImGui::Checkbox("Antitone Byte", &i2d_antitone_byte);
+            ImGui::Checkbox("Include Header",     &i2d_include_header);
+            ImGui::Checkbox("Byte Invert",        &i2d_byte_invert);
             ImGui::Checkbox("Right to Left Scan", &i2d_r2l_scan);
             ImGui::Checkbox("Bottom to Top Scan", &i2d_b2t_scan);
-            ImGui::Checkbox("MSB First", &i2d_msb_first);
+            // ImGui::Checkbox("MSB First", &i2d_msb_first);
 
-            // Button, gray out if no image is loaded
-            if (image_loaded) {
-                if (ImGui::Button("Process Image")) {
-                    ProcessImagePreview(surf_proc, surf_out, v);
-                    tex_out = SDL_CreateTextureFromSurface(renderer, surf_out);
-                }
-            } else {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-                ImGui::Button("Process Image");
-                ImGui::PopStyleColor();
+            ImGui::SeparatorText("Target Size");
+            if(ImGui::InputInt2("##TS", i2d_target_size)){
+                if (i2d_target_size[0] < 1) i2d_target_size[0] = 1;
+                if (i2d_target_size[1] < 1) i2d_target_size[1] = 1;
             }
+            ImGui::Text("Resize Method");
+            ImGui::Combo("##RM", &i2d_resize_method, i2d_resize_method_alist, IM_ARRAYSIZE(i2d_resize_method_alist));
+        
+            ImGui::SeparatorText("Output Format");
+            ImGui::Combo("##OT", &i2d_output_type, i2d_output_type_alist, IM_ARRAYSIZE(i2d_output_type_alist));
 
             ImGui::NextColumn();
-
-
-            // Create container
             
             ImGui::SeparatorText("Image Preview");
 
@@ -295,26 +317,30 @@ int main(int argc, char** argv) {
                 ImGui::EndTable();
             }
 
+            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
             // Tabs 
             if (ImGui::BeginTabBar("##TabBar")) {
                 if (ImGui::BeginTabItem("Image Adj.")) {            
                     if(ImGui::Bezier( "Linear", v)){
-                    // Redraw
-                    ProcessImagePreview(surf_proc, surf_out, v);
-                    tex_out = SDL_CreateTextureFromSurface(renderer, surf_out);
-            }
+                        // Redraw
+                        ProcessImagePreview(surf_proc, surf_out, v);
+                        tex_out = SDL_CreateTextureFromSurface(renderer, surf_out);
+                    }
                     ImGui::EndTabItem();
                 }
                 if (ImGui::BeginTabItem("Tone Mapping")) {
                     ImGui::Text("This is tab 2");
+                    
                     ImGui::EndTabItem();
                 }
+
+                if(ImGui::BeginTabItem("Dithering")){
+                    ImGui::Text("This is tab 3");
+                    ImGui::EndTabItem();
+                }
+
                 ImGui::EndTabBar();
             }
-
-
-            // float y = ImGui::BezierValue( 0.5f, v ); // x delta in [0..1] range
-            // ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
             ImGui::End();
         }
 

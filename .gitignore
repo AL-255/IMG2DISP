@@ -54,6 +54,8 @@ dkms.conf
 # Executables
 IMG2DISP
 imgui.ini
+config.ini
+test.jpeg
 
 # Editor Artifacts
 .vscode/

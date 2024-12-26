@@ -60,7 +60,6 @@ namespace ImGui
         enum { AREA_CONSTRAINED = true }; // should grabbers be constrained to grid area?
         enum { AREA_WIDTH  = 200 }; // area width in pixels. 0 for adaptive size (will use max avail width)
         enum { AREA_HEIGHT = 140 }; // area width in pixels. 0 for adaptive size (will use max avail width)
-        enum { N_BINS      = 256 }; // histogram bins
         // curve presets
         static struct { const char *name; float points[4]; } presets [] = {
             { "Linear", 0.000f, 0.000f, 1.000f, 1.000f },
