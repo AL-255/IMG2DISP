@@ -17,7 +17,7 @@
 EXE = IMG2DISP
 IMGUI_DIR = ./imgui
 SRC_DIR  = ./src
-SOURCES = $(SRC_DIR)/bezier.cpp $(SRC_DIR)/image_io.cpp $(SRC_DIR)/main.cpp 
+SOURCES = $(SRC_DIR)/bezier.cpp $(SRC_DIR)/main.cpp 
 SOURCES += $(SRC_DIR)/../ImGuiFileDialog/ImGuiFileDialog.cpp 
 
 SOURCES += $(IMGUI_DIR)/imgui.cpp $(IMGUI_DIR)/imgui_demo.cpp $(IMGUI_DIR)/imgui_draw.cpp $(IMGUI_DIR)/imgui_tables.cpp $(IMGUI_DIR)/imgui_widgets.cpp
@@ -27,6 +27,7 @@ UNAME_S := $(shell uname -s)
 
 CXXFLAGS = -std=c++11 -I$(IMGUI_DIR) -I$(IMGUI_DIR)/backends -I$(SRC_DIR) -I$(SRC_DIR)/../ImGuiFileDialog
 CXXFLAGS += -g -Wall -Wformat
+CXXFLAGS += -DCUSTOM_IMGUIFILEDIALOG_CONFIG=\"../src/i2d_FileDialogConfig.h\"
 LIBS =
 
 ##---------------------------------------------------------------------

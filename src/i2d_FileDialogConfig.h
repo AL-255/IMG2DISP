@@ -29,7 +29,7 @@
 /////////////////////////////////
 
 // the slash's buttons in path cna be used for quick select parallles directories
-#define USE_QUICK_PATH_SELECT
+// #define USE_QUICK_PATH_SELECT
 
 /////////////////////////////////
 //// THUMBNAILS /////////////////
@@ -131,7 +131,7 @@
 // #define cancelButtonString " Cancel"
 // #define cancelButtonWidth 0.0f
 // alignement [0:1], 0.0 is left, 0.5 middle, 1.0 right, and other ratios
-// #define okCancelButtonAlignement 0.0f
+#define okCancelButtonAlignement 1.0f
 // #define invertOkAndCancelButtons 0
 
 // DateTimeFormat

@@ -16,15 +16,40 @@
 #include <stdio.h>
 #include <SDL.h>
 
-#include "image_io.hpp"
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
+
+#include "stb_image.h"
+#include "stb_image_resize2.h"
+
+// #include "image_io.hpp"
 #include "bezier.hpp"
 #include "ImGuiFileDialog.h"
-#include "i2d_FileDialogConfig.h"
 
 
 #if !SDL_VERSION_ATLEAST(2,0,17)
 #error This backend requires SDL 2.0.17+ because of SDL_RenderGeometry() function
 #endif
+
+void ProcessImagePreview(SDL_Surface* src, SDL_Surface* dst, float P[4]){
+    // Convert src to grayscale, and then write to dst, assume src and dst have the same size 200x200
+    // Make Bezier table
+    Uint8 map[256];
+    for (int i = 0; i < 256; i++){
+        map[i] = (Uint8)(255.0f * ImGui::BezierValue(i / 255.0f, P));
+    }
+    for (int y = 0; y < 200; y++){
+        for (int x = 0; x < 200; x++){
+            Uint8 r, g, b, a;
+            Uint32 pixel = *(Uint32*)((Uint8*)src->pixels + y * src->pitch + x * src->format->BytesPerPixel);
+            SDL_GetRGBA(pixel, src->format, &r, &g, &b, &a);
+            Uint8 gray = (Uint8)(0.299 * r + 0.587 * g + 0.114 * b);
+            // Use Bezier tone mapping
+            Uint8 val = map[gray];
+            *(Uint32*)((Uint8*)dst->pixels + y * dst->pitch + x * 4) = SDL_MapRGB(dst->format, val, val, val);
+        }
+    }
+}
 
 // Main code
 int main(int argc, char** argv) {
@@ -42,7 +67,7 @@ int main(int argc, char** argv) {
 
     // Create window with SDL_Renderer graphics context
     SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
-    SDL_Window* window = SDL_CreateWindow("Dear ImGui SDL2+SDL_Renderer example", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, window_flags);
+    SDL_Window* window = SDL_CreateWindow("Dear ImGui SDL2+SDL_Renderer example", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 640, 480, window_flags);
     if (window == nullptr)  {printf("Error: SDL_CreateWindow(): %s\n", SDL_GetError());return -1;}
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_ACCELERATED);
     if (renderer == nullptr){SDL_Log("Error creating SDL_Renderer!");                  return -1;}
@@ -73,8 +98,24 @@ int main(int argc, char** argv) {
     static const char* i2d_output_type_alist[] = { "Binary (*.bin)", "C array (*.c)"};
     static const char* i2d_scan_mode_alist[]   = { "Horizontal Scan", "Vertical Scan", "Data Hor, Byte Ver", "Data Ver, Byte Hor"};
     static const char* i2d_bpp_alist[]         = { "Monochrome", "4-Color", "16-Color"};
+
     // Temporary States
-    SDL_Texture* my_texture;
+    SDL_Texture* tex_raw;
+    SDL_Texture* tex_proc;
+    SDL_Texture* tex_out;
+    SDL_Surface* surf_raw;
+    SDL_Surface* surf_proc;
+    SDL_Surface* surf_out;
+    // Fill tex_proc with 0,0,0
+    {   
+        surf_raw  = SDL_CreateRGBSurface(0, 200, 200, 32, 0, 0, 0, 0); // Not useful
+        surf_proc = SDL_CreateRGBSurface(0, 200, 200, 32, 0, 0, 0, 0);
+        surf_out  = SDL_CreateRGBSurface(0, 200, 200, 32, 0, 0, 0, 0);
+        SDL_FillRect(surf_proc, NULL, SDL_MapRGB(surf_proc->format, 0, 0, 0));
+        SDL_FillRect(surf_out,  NULL, SDL_MapRGB(surf_out->format, 0, 0, 0));
+        tex_proc = SDL_CreateTextureFromSurface(renderer, surf_proc);
+        tex_out  = SDL_CreateTextureFromSurface(renderer, surf_out);
+    }
     int my_image_width  = -1;
     int my_image_height = -1;    
     bool show_demo_window    = false;
@@ -83,6 +124,8 @@ int main(int argc, char** argv) {
     bool open_after_saving   = false;
     bool image_loaded        = false;
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+
+    float v[5] = { 0.0f, 0.0f, 1.0f, 1.0f };
 
     // Saved States
     bool i2d_include_header = true;
@@ -130,13 +173,10 @@ int main(int argc, char** argv) {
         // Main Application Window
         // -------------------------------------------------------------------------------------------------------------
         if(1) {
-
-            // Create a window called "Hello, world!" and append into it.
             ImGui::Begin("##app", (bool*)__null, \
                   ImGuiWindowFlags_NoDecoration 
                 | ImGuiWindowFlags_NoBringToFrontOnFocus
                 | ImGuiWindowFlags_NoResize
-                | ImGuiWindowFlags_AlwaysVerticalScrollbar
                 | ImGuiWindowFlags_MenuBar
             );
 
@@ -147,10 +187,7 @@ int main(int argc, char** argv) {
                         // File Dialog
                         IGFD::FileDialogConfig config;
 	                    config.path = ".";
-                        ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Choose File", ".png,.jpg,.jpeg", config);
-                        
-                        // Move the new window to 0,0
-
+                        ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Choose File", "Image files (*.png *.gif *.jpg *.jpeg){.png,.gif,.jpg,.jpeg}", config);
                     }
                     if (ImGui::MenuItem("Export Image","Ctrl+X"))   { /* Do stuff */ }
                     if (ImGui::MenuItem("Export Data", "Ctrl+S"))   { /* Do stuff */ }
@@ -165,19 +202,13 @@ int main(int argc, char** argv) {
                 if (ImGui::BeginMenu("Config")) {
                     if (ImGui::MenuItem("Dark Theme", NULL, use_dark_theme)) {
                         use_dark_theme = true;
-                        if (use_dark_theme) {
-                            ImGui::StyleColorsDark();
-                        } else {
-                            ImGui::StyleColorsLight();
-                        }
+                        if (use_dark_theme) ImGui::StyleColorsDark();
+                        else                ImGui::StyleColorsLight();
                     }
                     if (ImGui::MenuItem("Light Theme", NULL, !use_dark_theme)) {
                         use_dark_theme = false;
-                        if (use_dark_theme) {
-                            ImGui::StyleColorsDark();
-                        } else {
-                            ImGui::StyleColorsLight();
-                        }
+                        if (use_dark_theme) ImGui::StyleColorsDark();
+                        else                ImGui::StyleColorsLight();
                     }
                     // Show Debug Window
                     if (ImGui::MenuItem("Show Debug Window", NULL, show_demo_window)) {
@@ -197,11 +228,9 @@ int main(int argc, char** argv) {
                 ImGui::EndMenuBar();
             }
 
-
             ImGui::Columns(2);
             ImGui::SetColumnWidth(0, 200);
                                     
-
             ImGui::SeparatorText("Pixel Format Control");
             ImGui::Text("Output Type");
             ImGui::Combo("##OT", &i2d_output_type, i2d_output_type_alist, IM_ARRAYSIZE(i2d_output_type_alist));
@@ -216,26 +245,76 @@ int main(int argc, char** argv) {
             ImGui::Checkbox("Bottom to Top Scan", &i2d_b2t_scan);
             ImGui::Checkbox("MSB First", &i2d_msb_first);
 
+            // Button, gray out if no image is loaded
+            if (image_loaded) {
+                if (ImGui::Button("Process Image")) {
+                    ProcessImagePreview(surf_proc, surf_out, v);
+                    tex_out = SDL_CreateTextureFromSurface(renderer, surf_out);
+                }
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                ImGui::Button("Process Image");
+                ImGui::PopStyleColor();
+            }
+
             ImGui::NextColumn();
 
+
+            // Create container
+            
             ImGui::SeparatorText("Image Preview");
-            if (!image_loaded) {
-                ImGui::Text("No Image Loaded");
-                ImGui::Image((ImTextureID)(intptr_t)my_texture, ImVec2(200, 200));
-            } else {
-                ImGui::Text("Image Size: %d x %d", my_image_width, my_image_height);
-                ImGui::Image((ImTextureID)(intptr_t)my_texture, ImVec2((float)my_image_width, (float)my_image_height));
+
+            if (ImGui::BeginTable("ImageTable", 2, 0)) {
+                ImGui::TableNextColumn();
+                if (!image_loaded) {
+                    ImGui::Text("No Image Loaded");
+                } else {
+                    ImGui::Text("Image Size: %d x %d", my_image_width, my_image_height);
+                }
+                // Draw the image, retain aspect ratio
+                ImGui::Image((ImTextureID)(intptr_t)tex_proc, ImVec2(200,200));
                 // Draw a frame around the image
                 ImVec2 p = ImGui::GetItemRectMin();
                 ImVec2 q = ImGui::GetItemRectMax();
                 ImGui::GetWindowDrawList()->AddRect(p, q, IM_COL32(255, 255, 255, 255));
+
+                ImGui::TableNextColumn();
+
+                if (!image_loaded) {
+                    ImGui::Text("No Image Loaded");
+                } else {
+                    ImGui::Text("Image Size: %d x %d", my_image_width, my_image_height);
+                }
+                // Draw the image, retain aspect ratio
+                ImGui::Image((ImTextureID)(intptr_t)tex_out, ImVec2(200,200));
+                // Draw a frame around the image
+                p = ImGui::GetItemRectMin();
+                q = ImGui::GetItemRectMax();
+                ImGui::GetWindowDrawList()->AddRect(p, q, IM_COL32(255, 255, 255, 255));
+
+                ImGui::EndTable();
             }
 
-            static float v[5] = { 0.390f, 0.575f, 0.565f, 1.000f }; 
-            ImGui::Bezier( "easeOutSine", v);       // draw
-            // float y = ImGui::BezierValue( 0.5f, v ); // x delta in [0..1] range
+            // Tabs 
+            if (ImGui::BeginTabBar("##TabBar")) {
+                if (ImGui::BeginTabItem("Image Adj.")) {            
+                    if(ImGui::Bezier( "Linear", v)){
+                    // Redraw
+                    ProcessImagePreview(surf_proc, surf_out, v);
+                    tex_out = SDL_CreateTextureFromSurface(renderer, surf_out);
+            }
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Tone Mapping")) {
+                    ImGui::Text("This is tab 2");
+                    ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
+            }
 
-            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
+
+            // float y = ImGui::BezierValue( 0.5f, v ); // x delta in [0..1] range
+            // ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
             ImGui::End();
         }
 
@@ -259,15 +338,63 @@ int main(int argc, char** argv) {
         ImVec2 maxSize = io.DisplaySize;
         ImVec2 minSize = ImVec2(maxSize.x/2, maxSize.y/2);
         if (ImGuiFileDialog::Instance()->Display("ChooseFileDlgKey", ImGuiWindowFlags_NoCollapse, minSize, maxSize)) {
-            if (ImGuiFileDialog::Instance()->IsOk()) { // action if OK
-            std::string filePathName = ImGuiFileDialog::Instance()->GetFilePathName();
-            std::string filePath = ImGuiFileDialog::Instance()->GetCurrentPath();
-            // action
-            LoadTextureFromFile(filePathName.c_str(), renderer, &my_texture, &my_image_width, &my_image_height);
-            image_loaded = true;
+            if (ImGuiFileDialog::Instance()->IsOk()) {
+                std::string filePathName = ImGuiFileDialog::Instance()->GetFilePathName();
+                std::string filePath = ImGuiFileDialog::Instance()->GetCurrentPath();
+                // LoadTextureFromFile(filePathName.c_str(), renderer, &tex1, &my_image_width, &my_image_height);
+
+                // Load image from file
+                FILE* f = fopen(filePathName.c_str(), "rb");
+                if (f == NULL) {
+                    fprintf(stderr, "Failed to open file: %s\n", filePathName.c_str());
+                    return false;
+                }
+                fseek(f, 0, SEEK_END);
+                size_t file_size = (size_t)ftell(f);
+                fseek(f, 0, SEEK_SET);
+                void* file_data = IM_ALLOC(file_size);
+                fread(file_data, 1, file_size, f);
+
+                int channels = 4;
+                unsigned char* image_data = stbi_load_from_memory((const unsigned char*)file_data, file_size, &my_image_width, &my_image_height, NULL, channels);
+                if (image_data == nullptr){
+                    fprintf(stderr, "Failed to load image: %s\n", stbi_failure_reason());
+                    return false;
+                }
+                IM_FREE(file_data);
+
+                surf_raw = SDL_CreateRGBSurfaceFrom((void*)image_data, my_image_width, my_image_height, channels * 8, channels * my_image_width, 0x000000ff, 0x0000ff00, 0x00ff0000, 0xff000000);
+                if (surf_raw == nullptr){
+                    fprintf(stderr, "Failed to create SDL surface: %s\n", SDL_GetError());
+                    return false;
+                }
+
+                // Resize the image for the 200x200 preview
+                surf_proc = SDL_CreateRGBSurface(0, 200, 200, 32, 0, 0, 0, 0);
+                SDL_FillRect(surf_proc, NULL, SDL_MapRGB(surf_proc->format, 0, 0, 0));
+
+                float aspectRatio = (float)my_image_width / (float)my_image_height;
+                int newWidth, newHeight;
+                if (aspectRatio > 1.0f) {
+                    newWidth = 200;
+                    newHeight = (int)(200 / aspectRatio);
+                } else {
+                    newWidth = (int)(200 * aspectRatio);
+                    newHeight = 200;
+                }
+
+                SDL_Rect destRect = { (200 - newWidth) / 2, (200 - newHeight) / 2, newWidth, newHeight };
+                SDL_BlitScaled(surf_raw, NULL, surf_proc, &destRect);
+
+                tex_raw  = SDL_CreateTextureFromSurface(renderer, surf_raw);
+                tex_proc = SDL_CreateTextureFromSurface(renderer, surf_proc);
+                
+                ProcessImagePreview(surf_proc, surf_out, v);
+                tex_out = SDL_CreateTextureFromSurface(renderer, surf_out);
+
+                image_loaded = true;
             }
             
-            // close
             ImGuiFileDialog::Instance()->Close();
         }
 
@@ -291,6 +418,11 @@ int main(int argc, char** argv) {
     ImGui::DestroyContext();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
+
+    SDL_FreeSurface(surf_raw);
+    SDL_FreeSurface(surf_proc);
+    SDL_FreeSurface(surf_out);
+
     SDL_Quit();
 
     return 0;
