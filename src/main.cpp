@@ -10,6 +10,8 @@
 // Important to understand: SDL_Renderer is an _optional_ component of SDL2.
 // For a multi-platform app consider using e.g. SDL+DirectX on Windows and SDL+OpenGL on Linux/OSX.
 
+#include "i2d_config.h"
+
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
@@ -35,21 +37,7 @@
 void ProcessImagePreview(SDL_Surface* src, SDL_Surface* dst, float P[4]){
     // Convert src to grayscale, and then write to dst, assume src and dst have the same size 200x200
     // Make Bezier table
-    Uint8 map[256];
-    for (int i = 0; i < 256; i++){
-        map[i] = (Uint8)(255.0f * ImGui::BezierValue(i / 255.0f, P));
-    }
-    for (int y = 0; y < 200; y++){
-        for (int x = 0; x < 200; x++){
-            Uint8 r, g, b, a;
-            Uint32 pixel = *(Uint32*)((Uint8*)src->pixels + y * src->pitch + x * src->format->BytesPerPixel);
-            SDL_GetRGBA(pixel, src->format, &r, &g, &b, &a);
-            Uint8 gray = (Uint8)(0.299 * r + 0.587 * g + 0.114 * b);
-            // Use Bezier tone mapping
-            Uint8 val = map[gray];
-            *(Uint32*)((Uint8*)dst->pixels + y * dst->pitch + x * 4) = SDL_MapRGB(dst->format, val, val, val);
-        }
-    }
+
 }
 
 // Main code
@@ -100,25 +88,34 @@ int main(int argc, char** argv) {
     static const char* i2d_scan_mode_alist[]     = { "Horizontal Scan", "Vertical Scan", "Data Hor, Byte Ver", "Data Ver, Byte Hor"};
     static const char* i2d_bpp_alist[]           = { "Monochrome", "4-Index"};
     static const char* i2d_resize_method_alist[] = { "Fit", "Fit Height", "Fit Width", "Stretch", "Center", "Tile"};
+    typedef enum { I2D_STATE_IMPORT = 0 \
+                 , I2D_STATE_CURVE \
+                 , I2D_STATE_MAPPING \
+                 , I2D_STATE_DITHERING \
+                 , I2D_STATE_MAX } i2d_pipe_state_t;
 
     // Temporary States
     SDL_Texture* tex_raw;
-    SDL_Texture* tex_proc;
+    SDL_Texture* tex_raw_preview;
     SDL_Texture* tex_out;
     SDL_Texture* tex_fmt_preview;
 
     SDL_Surface* surf_raw;
-    SDL_Surface* surf_proc;
-    SDL_Surface* surf_out;
-    // Fill tex_proc with 0,0,0
+    SDL_Surface* surf_raw_preview;
+    SDL_Surface* surf_preview_ia;
+    SDL_Surface* surf_preview_tm;
+
+    // Fill tex_raw_preview with 0,0,0
     {   
-        surf_raw  = SDL_CreateRGBSurface(0, 200, 200, 32, 0, 0, 0, 0); // Not useful
-        surf_proc = SDL_CreateRGBSurface(0, 200, 200, 32, 0, 0, 0, 0);
-        surf_out  = SDL_CreateRGBSurface(0, 200, 200, 32, 0, 0, 0, 0);
-        SDL_FillRect(surf_proc, NULL, SDL_MapRGB(surf_proc->format, 0, 0, 0));
-        SDL_FillRect(surf_out,  NULL, SDL_MapRGB(surf_out->format, 0, 0, 0));
-        tex_proc = SDL_CreateTextureFromSurface(renderer, surf_proc);
-        tex_out  = SDL_CreateTextureFromSurface(renderer, surf_out);
+        surf_raw  = SDL_CreateRGBSurface(0, 1, 1, 32, 0, 0, 0, 0); // Not useful
+        surf_raw_preview = SDL_CreateRGBSurface(0, I2D_PREVIEW_WIDTH, I2D_PREVIEW_HEIGHT, 32, 0, 0, 0, 0);
+        surf_preview_ia  = SDL_CreateRGBSurface(0, I2D_PREVIEW_WIDTH, I2D_PREVIEW_HEIGHT, 32, 0, 0, 0, 0);
+        surf_preview_tm   = SDL_CreateRGBSurface(0, I2D_PREVIEW_WIDTH, I2D_PREVIEW_HEIGHT, 32, 0, 0, 0, 0);
+        SDL_FillRect(surf_raw_preview, NULL, SDL_MapRGB(surf_raw_preview->format, 0, 0, 0));
+        SDL_FillRect(surf_preview_ia,  NULL, SDL_MapRGB(surf_preview_ia->format, 0, 0, 0));
+        SDL_FillRect(surf_preview_tm,  NULL, SDL_MapRGB(surf_preview_tm->format, 0, 0, 0));
+        tex_raw_preview = SDL_CreateTextureFromSurface(renderer, surf_raw_preview);
+        tex_out  = SDL_CreateTextureFromSurface(renderer, surf_preview_ia);
     }
     int my_image_width  = -1;
     int my_image_height = -1;    
@@ -127,9 +124,13 @@ int main(int argc, char** argv) {
     bool use_dark_theme      = true;
     bool open_after_saving   = false;
     bool image_loaded        = false;
+    bool image_preview_redraw = false;
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+    float i2d_bezier_cp[5] = { 0.0f, 0.0f, 1.0f, 1.0f };
+    i2d_pipe_state_t i2d_pipe_state = I2D_STATE_CURVE;
+    float histogram[256];
 
-    float v[5] = { 0.0f, 0.0f, 1.0f, 1.0f };
+    for (int i = 0; i < 256; i++) histogram[i] = 0.0f;
 
     // Saved States
     bool i2d_include_header = true;
@@ -142,6 +143,10 @@ int main(int argc, char** argv) {
     int  i2d_bpp_mode    = 0;
     int  i2d_resize_method = 0;
     int  i2d_target_size[2] = {1,1};
+    int  i2d_threshold[16];
+
+    for (int i = 0; i < 16; i++) i2d_threshold[i] =0;
+
 
 
     i2d_fmt_il_read(renderer, &tex_fmt_preview, i2d_scan_mode, i2d_bpp_mode, i2d_byte_invert, i2d_msb_first, i2d_r2l_scan, i2d_b2t_scan);
@@ -284,7 +289,6 @@ int main(int argc, char** argv) {
                 i2d_fmt_il_read(renderer, &tex_fmt_preview, i2d_scan_mode, i2d_bpp_mode, i2d_byte_invert, i2d_msb_first, i2d_r2l_scan, i2d_b2t_scan);
             // ImGui::Text("Bits Per Pixel");
             // ImGui::Combo("##BPP", &i2d_bpp_mode, i2d_bpp_alist, IM_ARRAYSIZE(i2d_bpp_alist));
-
             // ImGui::Checkbox("MSB First", &i2d_msb_first);
 
             ImGui::SeparatorText("Target Size");
@@ -294,7 +298,7 @@ int main(int argc, char** argv) {
             }
             ImGui::Text("Resize Method");
             ImGui::Combo("##RM", &i2d_resize_method, i2d_resize_method_alist, IM_ARRAYSIZE(i2d_resize_method_alist));
-        
+
             ImGui::SeparatorText("Output Format");
             ImGui::Checkbox("Include Header",     &i2d_include_header);
             ImGui::Combo("##OT", &i2d_output_type, i2d_output_type_alist, IM_ARRAYSIZE(i2d_output_type_alist));
@@ -305,28 +309,20 @@ int main(int argc, char** argv) {
 
             if (ImGui::BeginTable("ImageTable", 2, 0)) {
                 ImGui::TableNextColumn();
-                if (!image_loaded) {
-                    ImGui::Text("No Image Loaded");
-                } else {
-                    ImGui::Text("Image Size: %d x %d", my_image_width, my_image_height);
-                }
-                // Draw the image, retain aspect ratio
-                ImGui::Image((ImTextureID)(intptr_t)tex_proc, ImVec2(200,200));
-                // Draw a frame around the image
+                // Input Image
+                if (!image_loaded) ImGui::Text("No Image Loaded");
+                else               ImGui::Text("Image Size: %d x %d", my_image_width, my_image_height);
+                ImGui::Image((ImTextureID)(intptr_t)tex_raw_preview, ImVec2(I2D_PREVIEW_WIDTH,I2D_PREVIEW_HEIGHT));
                 ImVec2 p = ImGui::GetItemRectMin();
                 ImVec2 q = ImGui::GetItemRectMax();
                 ImGui::GetWindowDrawList()->AddRect(p, q, IM_COL32(255, 255, 255, 255));
 
                 ImGui::TableNextColumn();
 
-                if (!image_loaded) {
-                    ImGui::Text("No Image Loaded");
-                } else {
-                    ImGui::Text("Image Size: %d x %d", my_image_width, my_image_height);
-                }
-                // Draw the image, retain aspect ratio
-                ImGui::Image((ImTextureID)(intptr_t)tex_out, ImVec2(200,200));
-                // Draw a frame around the image
+                // Preview Image
+                if (!image_loaded) ImGui::Text("No Image Loaded");
+                else               ImGui::Text("Image Size: %d x %d", my_image_width, my_image_height);
+                ImGui::Image((ImTextureID)(intptr_t)tex_out, ImVec2(I2D_PREVIEW_WIDTH,I2D_PREVIEW_HEIGHT));
                 p = ImGui::GetItemRectMin();
                 q = ImGui::GetItemRectMax();
                 ImGui::GetWindowDrawList()->AddRect(p, q, IM_COL32(255, 255, 255, 255));
@@ -337,27 +333,103 @@ int main(int argc, char** argv) {
             ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
             // Tabs 
             if (ImGui::BeginTabBar("##TabBar")) {
-                if (ImGui::BeginTabItem("Image Adj.")) {            
-                    if(ImGui::Bezier( "Linear", v)){
-                        // Redraw
-                        ProcessImagePreview(surf_proc, surf_out, v);
-                        tex_out = SDL_CreateTextureFromSurface(renderer, surf_out);
+                if (ImGui::BeginTabItem("Image Adj.")) {
+                    if (i2d_pipe_state != I2D_STATE_CURVE){
+                        i2d_pipe_state = I2D_STATE_CURVE;
+                        image_preview_redraw = true;
                     }
+                    ImGui::BeginTable("##CurveTable", 2, 0);
+                    ImGui::TableNextColumn();
+                    ImGui::SeparatorText("Curve Adjustment");
+                    // Float Sliders
+                    image_preview_redraw |= ImGui::SliderFloat2("##P0", i2d_bezier_cp, 0.0f, 1.0f, "%.2f");
+                    image_preview_redraw |= ImGui::SliderFloat2("##P1", i2d_bezier_cp + 2, 0.0f, 1.0f, "%.2f");
+
+                    ImGui::TableNextColumn();
+                    image_preview_redraw |= ImGui::Bezier( "Linear", i2d_bezier_cp);
+                    ImVec2 hist_area = ImGui::GetContentRegionAvail();
+                    ImGui::PlotHistogram("##Histogram_IA", histogram, sizeof(histogram)/sizeof(float), 0, NULL, 0, 1.0f, ImVec2(hist_area.x, hist_area.y));
+
+                    ImGui::EndTable();
                     ImGui::EndTabItem();
                 }
                 if (ImGui::BeginTabItem("Tone Mapping")) {
-                    ImGui::Text("This is tab 2");
-                    
+                    if (i2d_pipe_state != I2D_STATE_MAPPING){
+                        i2d_pipe_state = I2D_STATE_MAPPING;
+                        image_preview_redraw = true;
+                    }
+                    ImGui::PlotHistogram("##Histogram_TM", histogram, sizeof(histogram)/sizeof(float), 0, NULL, 0, 1.0f, ImVec2(400, 100));
+                    ImGui::SetNextItemWidth(400);
+                    image_preview_redraw |= ImGui::SliderInt("##SI_Threshold", &i2d_threshold[0], 0, 255, "Threshold: %d");
                     ImGui::EndTabItem();
                 }
 
                 if(ImGui::BeginTabItem("Dithering")){
+                    if (i2d_pipe_state != I2D_STATE_DITHERING){
+                        i2d_pipe_state = I2D_STATE_DITHERING;
+                        image_preview_redraw = true;
+                    }
                     ImGui::Text("This is tab 3");
                     ImGui::EndTabItem();
                 }
 
                 ImGui::EndTabBar();
             }
+
+            // Handle Image Preview Redraw
+            if (image_preview_redraw && image_loaded){
+                Uint8 map[256];
+                for (int i = 0; i < 256; i++){
+                    map[i] = (Uint8)(255.0f * ImGui::BezierValue(i / 255.0f, i2d_bezier_cp));
+                }
+                for (int y = 0; y < I2D_PREVIEW_WIDTH; y++){
+                    for (int x = 0; x < I2D_PREVIEW_HEIGHT; x++){
+                        Uint8 r, g, b, a;
+                        Uint32 pixel = *(Uint32*)((Uint8*)surf_raw_preview->pixels + y * surf_raw_preview->pitch + x * surf_raw_preview->format->BytesPerPixel);
+                        SDL_GetRGBA(pixel, surf_raw_preview->format, &r, &g, &b, &a);
+                        Uint8 gray = (Uint8)(0.299 * r + 0.587 * g + 0.114 * b);
+                        // Use Bezier tone mapping
+                        Uint8 val = map[gray];
+                        *(Uint32*)((Uint8*)surf_preview_ia->pixels + y * surf_preview_ia->pitch + x * 4) = SDL_MapRGB(surf_preview_ia->format, val, val, val);
+                    }
+                }
+
+                // Update tm
+                for (int y = 0; y < I2D_PREVIEW_WIDTH; y++){
+                    for (int x = 0; x < I2D_PREVIEW_HEIGHT; x++){
+                        Uint8 r, g, b, a;
+                        Uint32 pixel = *(Uint32*)((Uint8*)surf_preview_ia->pixels + y * surf_preview_ia->pitch + x * surf_preview_ia->format->BytesPerPixel);
+                        SDL_GetRGBA(pixel, surf_preview_ia->format, &r, &g, &b, &a);
+                        Uint8 val = (Uint8)(0.299 * r + 0.587 * g + 0.114 * b);
+                        if (val > i2d_threshold[0]) val = 255;
+                        else                        val = 0;
+                        *(Uint32*)((Uint8*)surf_preview_tm->pixels + y * surf_preview_tm->pitch + x * 4) = SDL_MapRGB(surf_preview_tm->format, val, val, val);
+                    }
+                }
+
+                if (i2d_pipe_state == I2D_STATE_CURVE)   tex_out = SDL_CreateTextureFromSurface(renderer, surf_preview_ia);
+                if (i2d_pipe_state == I2D_STATE_MAPPING) tex_out = SDL_CreateTextureFromSurface(renderer, surf_preview_tm);
+                
+                // Calculate histogram from surf_preview_ia
+                for (int i = 0; i < 256; i++) histogram[i] = 0.0f;
+                for (int y = 0; y < I2D_PREVIEW_HEIGHT; y++){
+                    for (int x = 0; x < I2D_PREVIEW_WIDTH; x++){
+                        Uint8 r, g, b, a;
+                        Uint32 pixel = *(Uint32*)((Uint8*)surf_preview_ia->pixels + y * surf_preview_ia->pitch + x * surf_preview_ia->format->BytesPerPixel);
+                        SDL_GetRGBA(pixel, surf_preview_ia->format, &r, &g, &b, &a);
+                        float gray = 0.299 * r + 0.587 * g + 0.114 * b;
+                        histogram[(int)gray]++;
+                    }
+                }
+                // Normalize histogram
+                float max = 0;
+                for (int i = 0; i < 256; i++) max = histogram[i] > max ? histogram[i] : max;
+                for (int i = 0; i < 256; i++) histogram[i] = histogram[i]/max;
+
+                // Draw histogram
+
+                image_preview_redraw = false;
+            }   
             ImGui::End();
         }
 
@@ -368,7 +440,7 @@ int main(int argc, char** argv) {
         {
             ImGui::Begin("About", &show_about);   // Pass a pointer to our bool variable (the window will have a closing button that will clear the bool when clicked)
             ImGui::Text("ImGui + SDL2 + SDL_Renderer");
-            ImGui::Text("Anhang Li");
+            ImGui::Text("Anhang Li (thelithcore@gmail.com)");
 
             if (ImGui::Button("Close"))
                 show_about = false;
@@ -413,28 +485,26 @@ int main(int argc, char** argv) {
                 }
 
                 // Resize the image for the 200x200 preview
-                surf_proc = SDL_CreateRGBSurface(0, 200, 200, 32, 0, 0, 0, 0);
-                SDL_FillRect(surf_proc, NULL, SDL_MapRGB(surf_proc->format, 0, 0, 0));
+                surf_raw_preview = SDL_CreateRGBSurface(0, I2D_PREVIEW_WIDTH, I2D_PREVIEW_HEIGHT, 32, 0, 0, 0, 0);
+                SDL_FillRect(surf_raw_preview, NULL, SDL_MapRGB(surf_raw_preview->format, 0, 0, 0));
 
                 float aspectRatio = (float)my_image_width / (float)my_image_height;
                 int newWidth, newHeight;
                 if (aspectRatio > 1.0f) {
-                    newWidth = 200;
-                    newHeight = (int)(200 / aspectRatio);
+                    newWidth = I2D_PREVIEW_HEIGHT;
+                    newHeight = (int)(I2D_PREVIEW_HEIGHT / aspectRatio);
                 } else {
-                    newWidth = (int)(200 * aspectRatio);
-                    newHeight = 200;
+                    newWidth = (int)(I2D_PREVIEW_WIDTH * aspectRatio);
+                    newHeight = I2D_PREVIEW_WIDTH;
                 }
 
-                SDL_Rect destRect = { (200 - newWidth) / 2, (200 - newHeight) / 2, newWidth, newHeight };
-                SDL_BlitScaled(surf_raw, NULL, surf_proc, &destRect);
+                SDL_Rect destRect = { (I2D_PREVIEW_WIDTH - newWidth) / 2, (I2D_PREVIEW_HEIGHT - newHeight) / 2, newWidth, newHeight };
+                SDL_BlitScaled(surf_raw, NULL, surf_raw_preview, &destRect);
 
-                tex_raw  = SDL_CreateTextureFromSurface(renderer, surf_raw);
-                tex_proc = SDL_CreateTextureFromSurface(renderer, surf_proc);
+                tex_raw         = SDL_CreateTextureFromSurface(renderer, surf_raw);
+                tex_raw_preview = SDL_CreateTextureFromSurface(renderer, surf_raw_preview);
                 
-                ProcessImagePreview(surf_proc, surf_out, v);
-                tex_out = SDL_CreateTextureFromSurface(renderer, surf_out);
-
+                image_preview_redraw = true;
                 image_loaded = true;
             }
             
@@ -463,8 +533,9 @@ int main(int argc, char** argv) {
     SDL_DestroyWindow(window);
 
     SDL_FreeSurface(surf_raw);
-    SDL_FreeSurface(surf_proc);
-    SDL_FreeSurface(surf_out);
+    SDL_FreeSurface(surf_raw_preview);
+    SDL_FreeSurface(surf_preview_ia);
+    SDL_FreeSurface(surf_preview_tm);
 
     SDL_Quit();
 
