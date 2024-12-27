@@ -34,12 +34,6 @@
 #error This backend requires SDL 2.0.17+ because of SDL_RenderGeometry() function
 #endif
 
-void ProcessImagePreview(SDL_Surface* src, SDL_Surface* dst, float P[4]){
-    // Convert src to grayscale, and then write to dst, assume src and dst have the same size 200x200
-    // Make Bezier table
-
-}
-
 // Main code
 int main(int argc, char** argv) {
 
@@ -87,7 +81,8 @@ int main(int argc, char** argv) {
     static const char* i2d_output_type_alist[]   = { "C array (*.c)"};
     static const char* i2d_scan_mode_alist[]     = { "Horizontal Scan", "Vertical Scan", "Data Hor, Byte Ver", "Data Ver, Byte Hor"};
     static const char* i2d_bpp_alist[]           = { "Monochrome", "4-Index"};
-    static const char* i2d_resize_method_alist[] = { "Fit", "Fit Height", "Fit Width", "Stretch", "Center", "Tile"};
+    static const char* i2d_resize_method_alist[] = { "Fit", "Fit Height", "Fit Width", "Stretch", "Center"};
+    static const char* i2d_preview_alist[]       = { "Curve", "Tone Mapped", "Dithered"};
     typedef enum { I2D_STATE_IMPORT = 0 \
                  , I2D_STATE_CURVE \
                  , I2D_STATE_MAPPING \
@@ -96,7 +91,6 @@ int main(int argc, char** argv) {
 
     // Temporary States
     SDL_Texture* tex_raw;
-    SDL_Texture* tex_raw_preview;
     SDL_Texture* tex_out;
     SDL_Texture* tex_fmt_preview;
 
@@ -106,48 +100,47 @@ int main(int argc, char** argv) {
     SDL_Surface* surf_preview_tm;
 
     // Fill tex_raw_preview with 0,0,0
-    {   
-        surf_raw  = SDL_CreateRGBSurface(0, 1, 1, 32, 0, 0, 0, 0); // Not useful
-        surf_raw_preview = SDL_CreateRGBSurface(0, I2D_PREVIEW_WIDTH, I2D_PREVIEW_HEIGHT, 32, 0, 0, 0, 0);
-        surf_preview_ia  = SDL_CreateRGBSurface(0, I2D_PREVIEW_WIDTH, I2D_PREVIEW_HEIGHT, 32, 0, 0, 0, 0);
-        surf_preview_tm   = SDL_CreateRGBSurface(0, I2D_PREVIEW_WIDTH, I2D_PREVIEW_HEIGHT, 32, 0, 0, 0, 0);
-        SDL_FillRect(surf_raw_preview, NULL, SDL_MapRGB(surf_raw_preview->format, 0, 0, 0));
-        SDL_FillRect(surf_preview_ia,  NULL, SDL_MapRGB(surf_preview_ia->format, 0, 0, 0));
-        SDL_FillRect(surf_preview_tm,  NULL, SDL_MapRGB(surf_preview_tm->format, 0, 0, 0));
-        tex_raw_preview = SDL_CreateTextureFromSurface(renderer, surf_raw_preview);
-        tex_out  = SDL_CreateTextureFromSurface(renderer, surf_preview_ia);
-    }
-    int my_image_width  = -1;
-    int my_image_height = -1;    
-    bool show_demo_window    = false;
-    bool show_about          = false;
-    bool use_dark_theme      = true;
-    bool open_after_saving   = false;
-    bool image_loaded        = false;
+    surf_raw  = SDL_CreateRGBSurface(0, 1, 1, 32, 0, 0, 0, 0); // Not useful
+    surf_raw_preview = SDL_CreateRGBSurface(0, I2D_PREVIEW_WIDTH, I2D_PREVIEW_HEIGHT, 32, 0, 0, 0, 0);
+    surf_preview_ia  = SDL_CreateRGBSurface(0, I2D_PREVIEW_WIDTH, I2D_PREVIEW_HEIGHT, 32, 0, 0, 0, 0);
+    surf_preview_tm   = SDL_CreateRGBSurface(0, I2D_PREVIEW_WIDTH, I2D_PREVIEW_HEIGHT, 32, 0, 0, 0, 0);
+    SDL_FillRect(surf_raw_preview, NULL, SDL_MapRGB(surf_raw_preview->format, 0, 0, 0));
+    SDL_FillRect(surf_preview_ia,  NULL, SDL_MapRGB(surf_preview_ia->format, 0, 0, 0));
+    SDL_FillRect(surf_preview_tm,  NULL, SDL_MapRGB(surf_preview_tm->format, 0, 0, 0));
+    tex_out  = SDL_CreateTextureFromSurface(renderer, surf_preview_ia);
+
+    int  img_src_width        = -1;
+    int  img_src_height       = -1;    
+    bool show_demo_window     = false;
+    bool show_about           = false;
+    bool use_dark_theme       = true;
+    bool open_after_saving    = false;
+    bool image_loaded         = false;
     bool image_preview_redraw = false;
+    float image_src_scale     = 1.0f;
+    float image_preview_scale = 1.0f;
+    int   image_preview_mode  = 0;
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
-    float i2d_bezier_cp[5] = { 0.0f, 0.0f, 1.0f, 1.0f };
     i2d_pipe_state_t i2d_pipe_state = I2D_STATE_CURVE;
     float histogram[256];
 
     for (int i = 0; i < 256; i++) histogram[i] = 0.0f;
 
     // Saved States
-    bool i2d_include_header = true;
-    bool i2d_byte_invert  = false;
-    bool i2d_r2l_scan       = false;
-    bool i2d_b2t_scan       = false;
-    bool i2d_msb_first      = false;
-    int  i2d_output_type = 0;
-    int  i2d_scan_mode   = 0;
-    int  i2d_bpp_mode    = 0;
-    int  i2d_resize_method = 0;
-    int  i2d_target_size[2] = {1,1};
-    int  i2d_threshold[16];
+    bool  i2d_include_header = true;
+    bool  i2d_byte_invert    = false;
+    bool  i2d_r2l_scan       = false;
+    bool  i2d_b2t_scan       = false;
+    bool  i2d_msb_first      = false;
+    int   i2d_output_type    = 0;
+    int   i2d_scan_mode      = 0;
+    int   i2d_bpp_mode       = 0;
+    int   i2d_resize_method  = 0;
+    int   i2d_target_size[2] = {I2D_PREVIEW_WIDTH,I2D_PREVIEW_HEIGHT};
+    int   i2d_threshold[16];
+    float i2d_bezier_cp[5]   = { 0.0f, 0.0f, 1.0f, 1.0f };
 
     for (int i = 0; i < 16; i++) i2d_threshold[i] =0;
-
-
 
     i2d_fmt_il_read(renderer, &tex_fmt_preview, i2d_scan_mode, i2d_bpp_mode, i2d_byte_invert, i2d_msb_first, i2d_r2l_scan, i2d_b2t_scan);
 
@@ -189,8 +182,7 @@ int main(int argc, char** argv) {
                 | ImGuiWindowFlags_MenuBar
             );
 
-            // Add a menu bar
-            if (ImGui::BeginMenuBar()) {
+            if (ImGui::BeginMenuBar()) { // Menu Bar
                 if (ImGui::BeginMenu("File")) {
                     if (ImGui::MenuItem("Open Image",  "Ctrl+O")) {
                         // File Dialog
@@ -198,8 +190,25 @@ int main(int argc, char** argv) {
 	                    config.path = ".";
                         ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Choose File", "Image files (*.png *.gif *.jpg *.jpeg){.png,.gif,.jpg,.jpeg}", config);
                     }
-                    if (ImGui::MenuItem("Export Image","Ctrl+X"))   { /* Do stuff */ }
-                    if (ImGui::MenuItem("Export Data", "Ctrl+S"))   { /* Do stuff */ }
+                    if (ImGui::MenuItem("Export Image","Ctrl+X"))   {
+                        // File Dialog
+                        IGFD::FileDialogConfig config;
+                        config.path = ".";
+                        if (i2d_output_type == 0) 
+                        ImGuiFileDialog::Instance()->OpenDialog("SaveImageDlgKey", "Save Image", "Image files (*.png *.gif *.jpg *.jpeg){.png,.gif,.jpg,.jpeg}", config);
+                    }
+                    if (ImGui::MenuItem("Export Data", "Ctrl+S"))   {
+                        // File Dialog
+                        IGFD::FileDialogConfig config;
+                        config.path = ".";
+                        char* filter;
+                        if (i2d_output_type == 0) {
+                            filter = "C array (*.c){.c}";
+                        } else {
+                            // ...
+                        }
+                        ImGuiFileDialog::Instance()->OpenDialog("SaveDataDlgKey", "Save Data", filter, config);
+                    }
                     ImGui::Separator();
                     // Configurations
                     if (ImGui::MenuItem("Save Config", NULL))   {
@@ -266,124 +275,238 @@ int main(int argc, char** argv) {
                 ImGui::EndMenuBar();
             }
 
-            ImGui::Columns(2);
-            ImGui::SetColumnWidth(0, 200);
-                                    
-            ImGui::SeparatorText("Pixel Format Control");
+            ImGui::Columns(2);  // Note: This is legacy, prefer using tables
 
-            // Draw fmt_il
-            ImGui::SetCursorPosX((ImGui::GetColumnWidth() - I2D_FMT_IL_WIDTH) * 0.5f);
-            ImGui::Image((ImTextureID)(intptr_t)tex_fmt_preview, ImVec2(I2D_FMT_IL_WIDTH, I2D_FMT_IL_HEIGHT));
-            // Draw a frame around the image
-            ImVec2 p = ImGui::GetItemRectMin();
-            ImVec2 q = ImGui::GetItemRectMax();
-            ImGui::GetWindowDrawList()->AddRect(p, q, IM_COL32(255, 255, 255, 255));
-            ImGui::Text("Scan Mode");
-            bool redraw_fmt_il = false;
-            redraw_fmt_il |= ImGui::Combo("##SM", &i2d_scan_mode, i2d_scan_mode_alist, IM_ARRAYSIZE(i2d_scan_mode_alist));
-            redraw_fmt_il |= ImGui::Checkbox("Byte Invert",        &i2d_byte_invert);
-            redraw_fmt_il |= ImGui::Checkbox("Right to Left Scan", &i2d_r2l_scan);
-            redraw_fmt_il |= ImGui::Checkbox("Bottom to Top Scan", &i2d_b2t_scan); 
-            
-            if (redraw_fmt_il)
-                i2d_fmt_il_read(renderer, &tex_fmt_preview, i2d_scan_mode, i2d_bpp_mode, i2d_byte_invert, i2d_msb_first, i2d_r2l_scan, i2d_b2t_scan);
-            // ImGui::Text("Bits Per Pixel");
-            // ImGui::Combo("##BPP", &i2d_bpp_mode, i2d_bpp_alist, IM_ARRAYSIZE(i2d_bpp_alist));
-            // ImGui::Checkbox("MSB First", &i2d_msb_first);
-
-            ImGui::SeparatorText("Target Size");
-            if(ImGui::InputInt2("##TS", i2d_target_size)){
-                if (i2d_target_size[0] < 1) i2d_target_size[0] = 1;
-                if (i2d_target_size[1] < 1) i2d_target_size[1] = 1;
-            }
-            ImGui::Text("Resize Method");
-            ImGui::Combo("##RM", &i2d_resize_method, i2d_resize_method_alist, IM_ARRAYSIZE(i2d_resize_method_alist));
-
-            ImGui::SeparatorText("Output Format");
-            ImGui::Checkbox("Include Header",     &i2d_include_header);
-            ImGui::Combo("##OT", &i2d_output_type, i2d_output_type_alist, IM_ARRAYSIZE(i2d_output_type_alist));
-
-            ImGui::NextColumn();
-            
-            ImGui::SeparatorText("Image Preview");
-
-            if (ImGui::BeginTable("ImageTable", 2, 0)) {
-                ImGui::TableNextColumn();
-                // Input Image
-                if (!image_loaded) ImGui::Text("No Image Loaded");
-                else               ImGui::Text("Image Size: %d x %d", my_image_width, my_image_height);
-                ImGui::Image((ImTextureID)(intptr_t)tex_raw_preview, ImVec2(I2D_PREVIEW_WIDTH,I2D_PREVIEW_HEIGHT));
+            { // Left Sidebar
+                ImGui::SetColumnWidth(0, 200);
+                ImGui::SeparatorText("Pixel Format Control");
+                // Draw fmt_il
+                ImGui::SetCursorPosX((ImGui::GetColumnWidth() - I2D_FMT_IL_WIDTH) * 0.5f);
+                ImGui::Image((ImTextureID)(intptr_t)tex_fmt_preview, ImVec2(I2D_FMT_IL_WIDTH, I2D_FMT_IL_HEIGHT));
+                // Draw a frame around the image
                 ImVec2 p = ImGui::GetItemRectMin();
                 ImVec2 q = ImGui::GetItemRectMax();
                 ImGui::GetWindowDrawList()->AddRect(p, q, IM_COL32(255, 255, 255, 255));
+                ImGui::Text("Scan Mode");
+                bool redraw_fmt_il = false;
+                redraw_fmt_il |= ImGui::Combo("##SM", &i2d_scan_mode, i2d_scan_mode_alist, IM_ARRAYSIZE(i2d_scan_mode_alist));
+                redraw_fmt_il |= ImGui::Checkbox("Byte Invert",        &i2d_byte_invert);
+                redraw_fmt_il |= ImGui::Checkbox("Right to Left Scan", &i2d_r2l_scan);
+                redraw_fmt_il |= ImGui::Checkbox("Bottom to Top Scan", &i2d_b2t_scan); 
+                
+                if (redraw_fmt_il)
+                    i2d_fmt_il_read(renderer, &tex_fmt_preview, i2d_scan_mode, i2d_bpp_mode, i2d_byte_invert, i2d_msb_first, i2d_r2l_scan, i2d_b2t_scan);
+                // ImGui::Text("Bits Per Pixel");
+                // ImGui::Combo("##BPP", &i2d_bpp_mode, i2d_bpp_alist, IM_ARRAYSIZE(i2d_bpp_alist));
+                // ImGui::Checkbox("MSB First", &i2d_msb_first);
 
-                ImGui::TableNextColumn();
+                ImGui::SeparatorText("Target Size");
+                if(ImGui::InputInt2("##TS", i2d_target_size)) {
+                    if (i2d_target_size[0] < 1) i2d_target_size[0] = 1;
+                    if (i2d_target_size[1] < 1) i2d_target_size[1] = 1;
+                    image_preview_redraw = true;
+                }
+                ImGui::Text("Resize Method");
+                image_preview_redraw |= ImGui::Combo("##RM", &i2d_resize_method, i2d_resize_method_alist, IM_ARRAYSIZE(i2d_resize_method_alist));
 
-                // Preview Image
-                if (!image_loaded) ImGui::Text("No Image Loaded");
-                else               ImGui::Text("Image Size: %d x %d", my_image_width, my_image_height);
-                ImGui::Image((ImTextureID)(intptr_t)tex_out, ImVec2(I2D_PREVIEW_WIDTH,I2D_PREVIEW_HEIGHT));
-                p = ImGui::GetItemRectMin();
-                q = ImGui::GetItemRectMax();
-                ImGui::GetWindowDrawList()->AddRect(p, q, IM_COL32(255, 255, 255, 255));
 
-                ImGui::EndTable();
+                ImGui::SeparatorText("Output Format");
+                ImGui::Checkbox("Include Header",     &i2d_include_header);
+                ImGui::Combo("##OT", &i2d_output_type, i2d_output_type_alist, IM_ARRAYSIZE(i2d_output_type_alist));
+
             }
+            ImGui::NextColumn();
 
-            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
-            // Tabs 
-            if (ImGui::BeginTabBar("##TabBar")) {
-                if (ImGui::BeginTabItem("Image Adj.")) {
-                    if (i2d_pipe_state != I2D_STATE_CURVE){
-                        i2d_pipe_state = I2D_STATE_CURVE;
-                        image_preview_redraw = true;
+            { // Image Viewer
+                ImGui::SeparatorText("Image Preview");
+                if (ImGui::BeginTable("ImageTable", 2, 0)) {
+                    ImGui::TableNextColumn();
+                    // Input Image
+                    // ImGui::Image((ImTextureID)(intptr_t)tex_raw_preview, ImVec2(I2D_PREVIEW_WIDTH,I2D_PREVIEW_HEIGHT));
+
+                    ImGui::BeginChild("##ImageSrcContainer", ImVec2(I2D_PREVIEW_WIDTH, I2D_PREVIEW_HEIGHT), true, \
+                        ImGuiWindowFlags_AlwaysHorizontalScrollbar \
+                    | ImGuiWindowFlags_AlwaysVerticalScrollbar );
+
+                    ImVec2 src_container_size = ImGui::GetContentRegionAvail();
+                    ImGui::Image((ImTextureID)(intptr_t)tex_raw, ImVec2(img_src_width * image_src_scale, img_src_height * image_src_scale));
+                    ImGui::EndChild();
+                    ImVec2 p = ImGui::GetItemRectMin();
+                    ImVec2 q = ImGui::GetItemRectMax();
+                    ImGui::GetWindowDrawList()->AddRect(p, q, IM_COL32(255, 255, 255, 255));
+                    // ImGui::SetNextItemWidth(src_container_size.x);
+                    ImGui::SliderFloat("##SrcScale", &image_src_scale, 0.1f, 5.0f, "Scale: %.2f");
+                    ImGui::SameLine();
+                    if (ImGui::Button("100\%##Src")) image_src_scale = 1.0f;
+                    ImGui::SameLine();
+                    if (ImGui::Button("Fit##Src")) {
+                        float image_src_scale_w = src_container_size.x / img_src_width;
+                        float image_src_scale_h = src_container_size.y / img_src_height;
+                        image_src_scale = image_src_scale_w < image_src_scale_h ? image_src_scale_w : image_src_scale_h;
                     }
-                    ImGui::BeginTable("##CurveTable", 2, 0);
-                    ImGui::TableNextColumn();
-                    ImGui::SeparatorText("Curve Adjustment");
-                    // Float Sliders
-                    image_preview_redraw |= ImGui::SliderFloat2("##P0", i2d_bezier_cp, 0.0f, 1.0f, "%.2f");
-                    image_preview_redraw |= ImGui::SliderFloat2("##P1", i2d_bezier_cp + 2, 0.0f, 1.0f, "%.2f");
 
+                    if (!image_loaded) ImGui::Text("No Image Loaded");
+                    else               ImGui::Text("Image Size: %d x %d", img_src_width, img_src_height);
                     ImGui::TableNextColumn();
-                    image_preview_redraw |= ImGui::Bezier( "Linear", i2d_bezier_cp);
-                    ImVec2 hist_area = ImGui::GetContentRegionAvail();
-                    ImGui::PlotHistogram("##Histogram_IA", histogram, sizeof(histogram)/sizeof(float), 0, NULL, 0, 1.0f, ImVec2(hist_area.x, hist_area.y));
 
+                    // Preview Image
+                    ImGui::BeginChild("##ImagePreviewContainer", ImVec2(I2D_PREVIEW_WIDTH, I2D_PREVIEW_HEIGHT), true, \
+                        ImGuiWindowFlags_AlwaysHorizontalScrollbar \
+                    | ImGuiWindowFlags_AlwaysVerticalScrollbar );
+                    ImVec2 preview_container_size = ImGui::GetContentRegionAvail();
+                    ImGui::Image((ImTextureID)(intptr_t)tex_out, ImVec2(i2d_target_size[0] * image_preview_scale, i2d_target_size[1] * image_preview_scale));
+                    ImGui::EndChild();
+                    p = ImGui::GetItemRectMin();
+                    q = ImGui::GetItemRectMax();
+                    ImGui::GetWindowDrawList()->AddRect(p, q, IM_COL32(255, 255, 255, 255));
+                    // ImGui::SetNextItemWidth(preview_container_size.x);
+                    ImGui::SliderFloat("##PreviewScale", &image_preview_scale, 0.1f, 5.0f, "Scale: %.2f");
+                    ImGui::SameLine();
+                    if (ImGui::Button("100\%##Preview")) image_preview_scale = 1.0f;
+                    ImGui::SameLine();
+                    if (ImGui::Button("Fit##Preview")) {
+                        float image_preview_scale_w = preview_container_size.x / i2d_target_size[0];
+                        float image_preview_scale_h = preview_container_size.y / i2d_target_size[1];
+                        image_preview_scale = image_preview_scale_w < image_preview_scale_h ? image_preview_scale_w : image_preview_scale_h;
+                    } 
+                    if (ImGui::BeginTabBar("##PreviewTabBar")) {
+                        if (ImGui::BeginTabItem("Curve")) {
+                            if (image_preview_mode != 0){
+                                image_preview_redraw = true;
+                            }
+                            image_preview_mode = 0;
+                            ImGui::EndTabItem();
+                        }
+                        if (ImGui::BeginTabItem("Tone Mapped")) {
+                            if (image_preview_mode != 1){
+                                image_preview_redraw = true;
+                            }
+                            image_preview_mode = 1;
+                            ImGui::EndTabItem();
+                        }
+                        // if (ImGui::BeginTabItem("Dithered")) {
+                        // Not yet implemented
+                        ImGui::EndTabBar();
+                    }
                     ImGui::EndTable();
-                    ImGui::EndTabItem();
                 }
-                if (ImGui::BeginTabItem("Tone Mapping")) {
-                    if (i2d_pipe_state != I2D_STATE_MAPPING){
-                        i2d_pipe_state = I2D_STATE_MAPPING;
-                        image_preview_redraw = true;
-                    }
-                    ImGui::PlotHistogram("##Histogram_TM", histogram, sizeof(histogram)/sizeof(float), 0, NULL, 0, 1.0f, ImVec2(400, 100));
-                    ImGui::SetNextItemWidth(400);
-                    image_preview_redraw |= ImGui::SliderInt("##SI_Threshold", &i2d_threshold[0], 0, 255, "Threshold: %d");
-                    ImGui::EndTabItem();
-                }
-
-                if(ImGui::BeginTabItem("Dithering")){
-                    if (i2d_pipe_state != I2D_STATE_DITHERING){
-                        i2d_pipe_state = I2D_STATE_DITHERING;
-                        image_preview_redraw = true;
-                    }
-                    ImGui::Text("This is tab 3");
-                    ImGui::EndTabItem();
-                }
-
-                ImGui::EndTabBar();
             }
+            // ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
 
-            // Handle Image Preview Redraw
-            if (image_preview_redraw && image_loaded){
-                Uint8 map[256];
-                for (int i = 0; i < 256; i++){
-                    map[i] = (Uint8)(255.0f * ImGui::BezierValue(i / 255.0f, i2d_bezier_cp));
+            { // Image Adjustment
+                if (ImGui::BeginTabBar("##TabBar")) {
+                    if (ImGui::BeginTabItem("Image Adj.")) {
+                        if (i2d_pipe_state != I2D_STATE_CURVE){
+                            i2d_pipe_state = I2D_STATE_CURVE;
+                            image_preview_redraw = true;
+                        }
+                        ImGui::BeginTable("##IA_Table", 2, 0);
+                        ImGui::TableNextColumn();
+                        ImGui::SeparatorText("Curve Adjustment");
+                        // Float Sliders
+                        image_preview_redraw |= ImGui::SliderFloat2("##IA_P0", i2d_bezier_cp, 0.0f, 1.0f, "%.2f");
+                        image_preview_redraw |= ImGui::SliderFloat2("##IA_P1", i2d_bezier_cp + 2, 0.0f, 1.0f, "%.2f");
+
+                        ImGui::TableNextColumn();
+                        image_preview_redraw |= ImGui::Bezier( "Linear", i2d_bezier_cp);
+                        ImVec2 hist_area = ImGui::GetContentRegionAvail();
+                        ImGui::PlotHistogram("##IA_Histogram", histogram, sizeof(histogram)/sizeof(float), 0, NULL, 0, 1.0f, ImVec2(hist_area.x, hist_area.y));
+
+                        ImGui::EndTable();
+                        ImGui::EndTabItem();
+                    }
+                    if (ImGui::BeginTabItem("Tone Mapping")) {
+                        if (i2d_pipe_state != I2D_STATE_MAPPING){
+                            i2d_pipe_state = I2D_STATE_MAPPING;
+                            image_preview_redraw = true;
+                        }
+                        ImGui::PlotHistogram("##TM_Histogram", histogram, sizeof(histogram)/sizeof(float), 0, NULL, 0, 1.0f, ImVec2(400, 100));
+                        ImGui::SetNextItemWidth(400);
+                        image_preview_redraw |= ImGui::SliderInt("##SI_Threshold", &i2d_threshold[0], 0, 255, "Threshold: %d");
+                        ImGui::EndTabItem();
+                    }
+
+                    if(ImGui::BeginTabItem("Dithering")){
+                        if (i2d_pipe_state != I2D_STATE_DITHERING){
+                            i2d_pipe_state = I2D_STATE_DITHERING;
+                            image_preview_redraw = true;
+                        }
+                        ImGui::Text("Not yet implemented");
+                        ImGui::EndTabItem();
+                    }
+
+                    ImGui::EndTabBar();
                 }
-                for (int y = 0; y < I2D_PREVIEW_WIDTH; y++){
-                    for (int x = 0; x < I2D_PREVIEW_HEIGHT; x++){
+            }
+            
+            if (image_preview_redraw && image_loaded){ // Handle Image Preview Redraw
+                // Update preview image from raw
+                // i2d_target_size
+
+                // Free old surfaces
+                SDL_FreeSurface(surf_raw_preview);
+                SDL_FreeSurface(surf_preview_ia);
+                SDL_FreeSurface(surf_preview_tm);
+                
+                surf_raw_preview = SDL_CreateRGBSurface(0, i2d_target_size[0], i2d_target_size[1], 32, 0, 0, 0, 0); // Scaled raw image
+                surf_preview_ia  = SDL_CreateRGBSurface(0, i2d_target_size[0], i2d_target_size[1], 32, 0, 0, 0, 0); // Post Image Adjustment
+                surf_preview_tm  = SDL_CreateRGBSurface(0, i2d_target_size[0], i2d_target_size[1], 32, 0, 0, 0, 0); // Post Tone Mapping
+
+                SDL_FillRect(surf_raw_preview, NULL, SDL_MapRGB(surf_raw_preview->format, 0, 0, 0));
+
+                /*
+                float aspectRatio = (float)img_src_width / (float)img_src_height;
+                int newWidth, newHeight;
+                if (aspectRatio > 1.0f) {
+                    newWidth = i2d_target_size[1];
+                    newHeight = (int)(i2d_target_size[1] / aspectRatio);
+                } else {
+                    newWidth = (int)(i2d_target_size[0] * aspectRatio);
+                    newHeight = i2d_target_size[0];
+                }
+                SDL_Rect destRect = { (i2d_target_size[0] - newWidth) / 2, (i2d_target_size[1] - newHeight) / 2, newWidth, newHeight };
+                */
+
+                // Calculate desireable bonding box based on the i2d_resize_method
+                SDL_Rect destRect;
+                float srcAspectRatio = (float)img_src_width / (float)img_src_height;
+                float dstAspectRatio = (float)i2d_target_size[0] / (float)i2d_target_size[1];
+
+                if (i2d_resize_method==0) {
+                    // Zoom to fit, keep aspect ratio
+                    if (srcAspectRatio > dstAspectRatio) goto I2D_RESIZE_FIT_HEIGHT;
+                    else                                 goto I2D_RESIZE_FIT_WIDTH;
+                } else if (i2d_resize_method==1) {
+                    I2D_RESIZE_FIT_HEIGHT:
+                    // Fit Height
+                    int newWidth = (int)(img_src_width * i2d_target_size[1] / img_src_height);
+                    int newHeight = i2d_target_size[1];
+                    destRect = { (i2d_target_size[0] - newWidth) / 2, 0, newWidth, newHeight };
+                } else if (i2d_resize_method==2) {
+                    I2D_RESIZE_FIT_WIDTH:
+                    // Fit Width
+                    int newWidth = i2d_target_size[0];
+                    int newHeight = (int)(img_src_height * i2d_target_size[0] / img_src_width);
+                    destRect = { 0, (i2d_target_size[1] - newHeight) / 2, newWidth, newHeight };
+                } else if (i2d_resize_method==3) {
+                    // Stretch to fit
+                    destRect = { 0, 0, i2d_target_size[0], i2d_target_size[1] };
+                } else if (i2d_resize_method==4) {
+                    // Center
+                    destRect = { (i2d_target_size[0] - img_src_width) / 2, (i2d_target_size[1] - img_src_height) / 2, img_src_width, img_src_height };
+                } else if (i2d_resize_method==5) {
+                    // Tile
+                    // ...
+                }
+               
+                SDL_BlitScaled(surf_raw, NULL, surf_raw_preview, &destRect);
+
+                Uint8 map[256];
+                for (int i = 0; i < 256; i++) map[i] = (Uint8)(255.0f * ImGui::BezierValue(i / 255.0f, i2d_bezier_cp));
+
+                // Update ia
+                for (int y = 0; y < i2d_target_size[1]; y++){
+                    for (int x = 0; x < i2d_target_size[0]; x++){
                         Uint8 r, g, b, a;
                         Uint32 pixel = *(Uint32*)((Uint8*)surf_raw_preview->pixels + y * surf_raw_preview->pitch + x * surf_raw_preview->format->BytesPerPixel);
                         SDL_GetRGBA(pixel, surf_raw_preview->format, &r, &g, &b, &a);
@@ -395,8 +518,8 @@ int main(int argc, char** argv) {
                 }
 
                 // Update tm
-                for (int y = 0; y < I2D_PREVIEW_WIDTH; y++){
-                    for (int x = 0; x < I2D_PREVIEW_HEIGHT; x++){
+                for (int y = 0; y < i2d_target_size[1]; y++){
+                    for (int x = 0; x < i2d_target_size[0]; x++){
                         Uint8 r, g, b, a;
                         Uint32 pixel = *(Uint32*)((Uint8*)surf_preview_ia->pixels + y * surf_preview_ia->pitch + x * surf_preview_ia->format->BytesPerPixel);
                         SDL_GetRGBA(pixel, surf_preview_ia->format, &r, &g, &b, &a);
@@ -406,9 +529,12 @@ int main(int argc, char** argv) {
                         *(Uint32*)((Uint8*)surf_preview_tm->pixels + y * surf_preview_tm->pitch + x * 4) = SDL_MapRGB(surf_preview_tm->format, val, val, val);
                     }
                 }
-
-                if (i2d_pipe_state == I2D_STATE_CURVE)   tex_out = SDL_CreateTextureFromSurface(renderer, surf_preview_ia);
-                if (i2d_pipe_state == I2D_STATE_MAPPING) tex_out = SDL_CreateTextureFromSurface(renderer, surf_preview_tm);
+            
+                switch (image_preview_mode){
+                    case 0: tex_out = SDL_CreateTextureFromSurface(renderer, surf_preview_ia); break;
+                    case 1: tex_out = SDL_CreateTextureFromSurface(renderer, surf_preview_tm); break;
+                    case 2: break;
+                }
                 
                 // Calculate histogram from surf_preview_ia
                 for (int i = 0; i < 256; i++) histogram[i] = 0.0f;
@@ -426,10 +552,9 @@ int main(int argc, char** argv) {
                 for (int i = 0; i < 256; i++) max = histogram[i] > max ? histogram[i] : max;
                 for (int i = 0; i < 256; i++) histogram[i] = histogram[i]/max;
 
-                // Draw histogram
-
                 image_preview_redraw = false;
             }   
+
             ImGui::End();
         }
 
@@ -448,7 +573,7 @@ int main(int argc, char** argv) {
         }
 
         // -------------------------------------------------------------------------------------------------------------
-        // File Selector
+        // File Selector - Load Image
         // -------------------------------------------------------------------------------------------------------------
         ImVec2 maxSize = io.DisplaySize;
         ImVec2 minSize = ImVec2(maxSize.x/2, maxSize.y/2);
@@ -456,8 +581,6 @@ int main(int argc, char** argv) {
             if (ImGuiFileDialog::Instance()->IsOk()) {
                 std::string filePathName = ImGuiFileDialog::Instance()->GetFilePathName();
                 std::string filePath = ImGuiFileDialog::Instance()->GetCurrentPath();
-                // LoadTextureFromFile(filePathName.c_str(), renderer, &tex1, &my_image_width, &my_image_height);
-
                 // Load image from file
                 FILE* f = fopen(filePathName.c_str(), "rb");
                 if (f == NULL) {
@@ -471,43 +594,60 @@ int main(int argc, char** argv) {
                 fread(file_data, 1, file_size, f);
 
                 int channels = 4;
-                unsigned char* image_data = stbi_load_from_memory((const unsigned char*)file_data, file_size, &my_image_width, &my_image_height, NULL, channels);
+                unsigned char* image_data = stbi_load_from_memory((const unsigned char*)file_data, file_size, &img_src_width, &img_src_height, NULL, channels);
                 if (image_data == nullptr){
                     fprintf(stderr, "Failed to load image: %s\n", stbi_failure_reason());
                     return false;
                 }
                 IM_FREE(file_data);
 
-                surf_raw = SDL_CreateRGBSurfaceFrom((void*)image_data, my_image_width, my_image_height, channels * 8, channels * my_image_width, 0x000000ff, 0x0000ff00, 0x00ff0000, 0xff000000);
+                surf_raw = SDL_CreateRGBSurfaceFrom((void*)image_data, img_src_width, img_src_height, channels * 8, channels * img_src_width, 0x000000ff, 0x0000ff00, 0x00ff0000, 0xff000000);
                 if (surf_raw == nullptr){
                     fprintf(stderr, "Failed to create SDL surface: %s\n", SDL_GetError());
                     return false;
                 }
 
-                // Resize the image for the 200x200 preview
-                surf_raw_preview = SDL_CreateRGBSurface(0, I2D_PREVIEW_WIDTH, I2D_PREVIEW_HEIGHT, 32, 0, 0, 0, 0);
-                SDL_FillRect(surf_raw_preview, NULL, SDL_MapRGB(surf_raw_preview->format, 0, 0, 0));
 
-                float aspectRatio = (float)my_image_width / (float)my_image_height;
-                int newWidth, newHeight;
-                if (aspectRatio > 1.0f) {
-                    newWidth = I2D_PREVIEW_HEIGHT;
-                    newHeight = (int)(I2D_PREVIEW_HEIGHT / aspectRatio);
-                } else {
-                    newWidth = (int)(I2D_PREVIEW_WIDTH * aspectRatio);
-                    newHeight = I2D_PREVIEW_WIDTH;
-                }
-
-                SDL_Rect destRect = { (I2D_PREVIEW_WIDTH - newWidth) / 2, (I2D_PREVIEW_HEIGHT - newHeight) / 2, newWidth, newHeight };
-                SDL_BlitScaled(surf_raw, NULL, surf_raw_preview, &destRect);
-
-                tex_raw         = SDL_CreateTextureFromSurface(renderer, surf_raw);
-                tex_raw_preview = SDL_CreateTextureFromSurface(renderer, surf_raw_preview);
+                tex_raw = SDL_CreateTextureFromSurface(renderer, surf_raw);
                 
                 image_preview_redraw = true;
                 image_loaded = true;
             }
             
+            ImGuiFileDialog::Instance()->Close();
+        }
+
+
+        // -------------------------------------------------------------------------------------------------------------
+        // File Selector - Save Data
+        // -------------------------------------------------------------------------------------------------------------
+        if (ImGuiFileDialog::Instance()->Display("SaveDataDlgKey", ImGuiWindowFlags_NoCollapse, minSize, maxSize)) {
+            if (ImGuiFileDialog::Instance()->IsOk()) {
+                std::string filePathName = ImGuiFileDialog::Instance()->GetFilePathName();
+                std::string filePath = ImGuiFileDialog::Instance()->GetCurrentPath();
+                // Save data to file
+                FILE* f = fopen(filePathName.c_str(), "wb");
+                if (f == NULL) {
+                    fprintf(stderr, "Failed to open file: %s\n", filePathName.c_str());
+                    return false;
+                }
+                // Write data to file
+                fclose(f);
+            }
+            ImGuiFileDialog::Instance()->Close();
+        }
+
+
+        // -------------------------------------------------------------------------------------------------------------
+        // File Selector - Save Image
+        // -------------------------------------------------------------------------------------------------------------
+        if (ImGuiFileDialog::Instance()->Display("SaveImageDlgKey", ImGuiWindowFlags_NoCollapse, minSize, maxSize)) {
+            if (ImGuiFileDialog::Instance()->IsOk()) {
+                std::string filePathName = ImGuiFileDialog::Instance()->GetFilePathName();
+                std::string filePath = ImGuiFileDialog::Instance()->GetCurrentPath();
+                // Save image to file
+                // ...
+            }
             ImGuiFileDialog::Instance()->Close();
         }
 
