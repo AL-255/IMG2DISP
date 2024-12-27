@@ -23,7 +23,7 @@
 #include "stb_image_resize2.h"
 #include "ini.h"
 
-// #include "image_io.hpp"
+#include "image_io.hpp"
 #include "bezier.hpp"
 #include "ImGuiFileDialog.h"
 
@@ -105,6 +105,8 @@ int main(int argc, char** argv) {
     SDL_Texture* tex_raw;
     SDL_Texture* tex_proc;
     SDL_Texture* tex_out;
+    SDL_Texture* tex_fmt_preview;
+
     SDL_Surface* surf_raw;
     SDL_Surface* surf_proc;
     SDL_Surface* surf_out;
@@ -140,6 +142,9 @@ int main(int argc, char** argv) {
     int  i2d_bpp_mode    = 0;
     int  i2d_resize_method = 0;
     int  i2d_target_size[2] = {1,1};
+
+
+    i2d_fmt_il_read(renderer, &tex_fmt_preview, i2d_scan_mode, i2d_bpp_mode, i2d_byte_invert, i2d_msb_first, i2d_r2l_scan, i2d_b2t_scan);
 
     // Main loop
     bool done = false;
@@ -260,15 +265,26 @@ int main(int argc, char** argv) {
             ImGui::SetColumnWidth(0, 200);
                                     
             ImGui::SeparatorText("Pixel Format Control");
+
+            // Draw fmt_il
+            ImGui::SetCursorPosX((ImGui::GetColumnWidth() - I2D_FMT_IL_WIDTH) * 0.5f);
+            ImGui::Image((ImTextureID)(intptr_t)tex_fmt_preview, ImVec2(I2D_FMT_IL_WIDTH, I2D_FMT_IL_HEIGHT));
+            // Draw a frame around the image
+            ImVec2 p = ImGui::GetItemRectMin();
+            ImVec2 q = ImGui::GetItemRectMax();
+            ImGui::GetWindowDrawList()->AddRect(p, q, IM_COL32(255, 255, 255, 255));
             ImGui::Text("Scan Mode");
-            ImGui::Combo("##SM", &i2d_scan_mode, i2d_scan_mode_alist, IM_ARRAYSIZE(i2d_scan_mode_alist));
+            bool redraw_fmt_il = false;
+            redraw_fmt_il |= ImGui::Combo("##SM", &i2d_scan_mode, i2d_scan_mode_alist, IM_ARRAYSIZE(i2d_scan_mode_alist));
+            redraw_fmt_il |= ImGui::Checkbox("Byte Invert",        &i2d_byte_invert);
+            redraw_fmt_il |= ImGui::Checkbox("Right to Left Scan", &i2d_r2l_scan);
+            redraw_fmt_il |= ImGui::Checkbox("Bottom to Top Scan", &i2d_b2t_scan); 
+            
+            if (redraw_fmt_il)
+                i2d_fmt_il_read(renderer, &tex_fmt_preview, i2d_scan_mode, i2d_bpp_mode, i2d_byte_invert, i2d_msb_first, i2d_r2l_scan, i2d_b2t_scan);
             // ImGui::Text("Bits Per Pixel");
             // ImGui::Combo("##BPP", &i2d_bpp_mode, i2d_bpp_alist, IM_ARRAYSIZE(i2d_bpp_alist));
 
-            ImGui::Checkbox("Include Header",     &i2d_include_header);
-            ImGui::Checkbox("Byte Invert",        &i2d_byte_invert);
-            ImGui::Checkbox("Right to Left Scan", &i2d_r2l_scan);
-            ImGui::Checkbox("Bottom to Top Scan", &i2d_b2t_scan);
             // ImGui::Checkbox("MSB First", &i2d_msb_first);
 
             ImGui::SeparatorText("Target Size");
@@ -280,6 +296,7 @@ int main(int argc, char** argv) {
             ImGui::Combo("##RM", &i2d_resize_method, i2d_resize_method_alist, IM_ARRAYSIZE(i2d_resize_method_alist));
         
             ImGui::SeparatorText("Output Format");
+            ImGui::Checkbox("Include Header",     &i2d_include_header);
             ImGui::Combo("##OT", &i2d_output_type, i2d_output_type_alist, IM_ARRAYSIZE(i2d_output_type_alist));
 
             ImGui::NextColumn();
