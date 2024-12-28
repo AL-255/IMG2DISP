@@ -1,16 +1,22 @@
-// Dear ImGui: standalone example application for SDL2 + SDL_Renderer
-// (SDL is a cross-platform general purpose library for handling windows, inputs, OpenGL/Vulkan/Metal graphics context creation, etc.)
+/* 
+ * This file is part of the IMG2DISP distribution (https://github.com/AL-255/IMG2DISP).
+ * Copyright (c) 2024 Anhang Li.
+ * 
+ * This program is free software: you can redistribute it and/or modify  
+ * it under the terms of the GNU General Public License as published by  
+ * the Free Software Foundation, version 3.
+ *
+ * This program is distributed in the hope that it will be useful, but 
+ * WITHOUT ANY WARRANTY; without even the implied warranty of 
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU 
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License 
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
 
-// Learn about Dear ImGui:
-// - FAQ                  https://dearimgui.com/faq
-// - Getting Started      https://dearimgui.com/getting-started
-// - Documentation        https://dearimgui.com/docs (same as your local docs/ folder).
-// - Introduction, links and more at the top of imgui.cpp
-
-// Important to understand: SDL_Renderer is an _optional_ component of SDL2.
-// For a multi-platform app consider using e.g. SDL+DirectX on Windows and SDL+OpenGL on Linux/OSX.
-
-#include "i2d_config.h"
+#include "i2d_config.hpp"
+#include "i2d_types.hpp"
 
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
@@ -25,8 +31,9 @@
 #include "stb_image_resize2.h"
 #include "ini.h"
 
-#include "image_io.hpp"
-#include "bezier.hpp"
+
+#include "i2d_image_io.hpp"
+#include "i2d_bezier.hpp"
 #include "ImGuiFileDialog.h"
 
 
@@ -80,9 +87,9 @@ int main(int argc, char** argv) {
     // Constants
     static const char* i2d_output_type_alist[]   = { "C array (*.c)"};
     static const char* i2d_scan_mode_alist[]     = { "Horizontal Scan", "Vertical Scan", "Data Hor, Byte Ver", "Data Ver, Byte Hor"};
-    static const char* i2d_bpp_alist[]           = { "Monochrome", "4-Index"};
+    // static const char* i2d_bpp_alist[]           = { "Monochrome", "4-Index"};
     static const char* i2d_resize_method_alist[] = { "Fit", "Fit Height", "Fit Width", "Stretch", "Center"};
-    static const char* i2d_preview_alist[]       = { "Curve", "Tone Mapped", "Dithered"};
+    // static const char* i2d_preview_alist[]       = { "Curve", "Tone Mapped", "Dithered"};
     typedef enum { I2D_STATE_IMPORT = 0 \
                  , I2D_STATE_CURVE \
                  , I2D_STATE_MAPPING \
@@ -93,7 +100,6 @@ int main(int argc, char** argv) {
     SDL_Texture* tex_raw;
     SDL_Texture* tex_out;
     SDL_Texture* tex_fmt_preview;
-
     SDL_Surface* surf_raw;
     SDL_Surface* surf_raw_preview;
     SDL_Surface* surf_preview_ia;
@@ -126,23 +132,13 @@ int main(int argc, char** argv) {
 
     for (int i = 0; i < 256; i++) histogram[i] = 0.0f;
 
+    uint8_t* data_bytes;
+
     // Saved States
-    bool  i2d_include_header = true;
-    bool  i2d_byte_invert    = false;
-    bool  i2d_r2l_scan       = false;
-    bool  i2d_b2t_scan       = false;
-    bool  i2d_msb_first      = false;
-    int   i2d_output_type    = 0;
-    int   i2d_scan_mode      = 0;
-    int   i2d_bpp_mode       = 0;
-    int   i2d_resize_method  = 0;
-    int   i2d_target_size[2] = {I2D_PREVIEW_WIDTH,I2D_PREVIEW_HEIGHT};
-    int   i2d_threshold[16];
-    float i2d_bezier_cp[5]   = { 0.0f, 0.0f, 1.0f, 1.0f };
+    i2d_context_t ctx;
+    for (int i = 0; i < 16; i++) ctx.threshold[i] =0;
 
-    for (int i = 0; i < 16; i++) i2d_threshold[i] =0;
-
-    i2d_fmt_il_read(renderer, &tex_fmt_preview, i2d_scan_mode, i2d_bpp_mode, i2d_byte_invert, i2d_msb_first, i2d_r2l_scan, i2d_b2t_scan);
+    i2d_fmt_il_read(renderer, &tex_fmt_preview, ctx.scan_mode, ctx.bpp_mode, ctx.byte_invert, ctx.msb_first, ctx.r2l_scan, ctx.b2t_scan);
 
     // Main loop
     bool done = false;
@@ -194,7 +190,7 @@ int main(int argc, char** argv) {
                         // File Dialog
                         IGFD::FileDialogConfig config;
                         config.path = ".";
-                        if (i2d_output_type == 0) 
+                        if (ctx.output_type == 0) 
                         ImGuiFileDialog::Instance()->OpenDialog("SaveImageDlgKey", "Save Image", "Image files (*.png *.gif *.jpg *.jpeg){.png,.gif,.jpg,.jpeg}", config);
                     }
                     if (ImGui::MenuItem("Export Data", "Ctrl+S"))   {
@@ -202,8 +198,8 @@ int main(int argc, char** argv) {
                         IGFD::FileDialogConfig config;
                         config.path = ".";
                         char* filter;
-                        if (i2d_output_type == 0) {
-                            filter = "C array (*.c){.c}";
+                        if (ctx.output_type == 0) {
+                            filter = (char*)"C array (*.c){.c}";
                         } else {
                             // ...
                         }
@@ -213,6 +209,7 @@ int main(int argc, char** argv) {
                     // Configurations
                     if (ImGui::MenuItem("Save Config", NULL))   {
                         // Write config.ini
+                        /*
                         mINI::INIFile file("config.ini");
                         mINI::INIStructure ini;
                         ini["Settings"]["IncludeHeader"]   = std::to_string(i2d_include_header);
@@ -225,10 +222,12 @@ int main(int argc, char** argv) {
                         ini["Settings"]["TargetWidth"]     = std::to_string(i2d_target_size[0]);
                         ini["Settings"]["TargetHeight"]    = std::to_string(i2d_target_size[1]);
                         file.write(ini);
+                        */
 
                      }
                     if (ImGui::MenuItem("Load Config", NULL))   {
                         // Read config.ini
+                        /*
                         mINI::INIFile file("config.ini");
                         mINI::INIStructure ini;
                         file.read(ini);
@@ -241,6 +240,8 @@ int main(int argc, char** argv) {
                         i2d_resize_method  = std::stoi(ini["Settings"]["ResizeMethod"]);
                         i2d_target_size[0] = std::stoi(ini["Settings"]["TargetWidth"]);
                         i2d_target_size[1] = std::stoi(ini["Settings"]["TargetHeight"]);
+                        */
+
                     }
                     ImGui::Separator();
                     if (ImGui::MenuItem("Exit", "Ctrl+W"))  { done = true; }
@@ -289,30 +290,32 @@ int main(int argc, char** argv) {
                 ImGui::GetWindowDrawList()->AddRect(p, q, IM_COL32(255, 255, 255, 255));
                 ImGui::Text("Scan Mode");
                 bool redraw_fmt_il = false;
-                redraw_fmt_il |= ImGui::Combo("##SM", &i2d_scan_mode, i2d_scan_mode_alist, IM_ARRAYSIZE(i2d_scan_mode_alist));
-                redraw_fmt_il |= ImGui::Checkbox("Byte Invert",        &i2d_byte_invert);
-                redraw_fmt_il |= ImGui::Checkbox("Right to Left Scan", &i2d_r2l_scan);
-                redraw_fmt_il |= ImGui::Checkbox("Bottom to Top Scan", &i2d_b2t_scan); 
+                redraw_fmt_il |= ImGui::Combo("##SM", &(ctx.scan_mode), i2d_scan_mode_alist, IM_ARRAYSIZE(i2d_scan_mode_alist));
+                redraw_fmt_il |= ImGui::Checkbox("Byte Invert",        &(ctx.byte_invert));
+                redraw_fmt_il |= ImGui::Checkbox("Right to Left Scan", &(ctx.r2l_scan));
+                redraw_fmt_il |= ImGui::Checkbox("Bottom to Top Scan", &(ctx.b2t_scan)); 
+                redraw_fmt_il |= ImGui::Checkbox("Pad to Full Bytes",  &(ctx.pad_to_full));
                 
-                if (redraw_fmt_il)
-                    i2d_fmt_il_read(renderer, &tex_fmt_preview, i2d_scan_mode, i2d_bpp_mode, i2d_byte_invert, i2d_msb_first, i2d_r2l_scan, i2d_b2t_scan);
+                if (redraw_fmt_il){
+                    i2d_fmt_il_read(renderer, &tex_fmt_preview, ctx.scan_mode, ctx.bpp_mode, ctx.byte_invert, ctx.msb_first, ctx.r2l_scan, ctx.b2t_scan);
+                }
                 // ImGui::Text("Bits Per Pixel");
                 // ImGui::Combo("##BPP", &i2d_bpp_mode, i2d_bpp_alist, IM_ARRAYSIZE(i2d_bpp_alist));
                 // ImGui::Checkbox("MSB First", &i2d_msb_first);
 
                 ImGui::SeparatorText("Target Size");
-                if(ImGui::InputInt2("##TS", i2d_target_size)) {
-                    if (i2d_target_size[0] < 1) i2d_target_size[0] = 1;
-                    if (i2d_target_size[1] < 1) i2d_target_size[1] = 1;
+                if(ImGui::InputInt2("##TS", ctx.target_size)) {
+                    if (ctx.target_size[0] < 1) ctx.target_size[0] = 1;
+                    if (ctx.target_size[1] < 1) ctx.target_size[1] = 1;
                     image_preview_redraw = true;
                 }
                 ImGui::Text("Resize Method");
-                image_preview_redraw |= ImGui::Combo("##RM", &i2d_resize_method, i2d_resize_method_alist, IM_ARRAYSIZE(i2d_resize_method_alist));
+                image_preview_redraw |= ImGui::Combo("##RM", &(ctx.resize_method), i2d_resize_method_alist, IM_ARRAYSIZE(i2d_resize_method_alist));
 
 
                 ImGui::SeparatorText("Output Format");
-                ImGui::Checkbox("Include Header",     &i2d_include_header);
-                ImGui::Combo("##OT", &i2d_output_type, i2d_output_type_alist, IM_ARRAYSIZE(i2d_output_type_alist));
+                ImGui::Checkbox("Include Header",     &(ctx.include_header));
+                ImGui::Combo("##OT", &(ctx.output_type), i2d_output_type_alist, IM_ARRAYSIZE(i2d_output_type_alist));
 
             }
             ImGui::NextColumn();
@@ -354,7 +357,7 @@ int main(int argc, char** argv) {
                         ImGuiWindowFlags_AlwaysHorizontalScrollbar \
                     | ImGuiWindowFlags_AlwaysVerticalScrollbar );
                     ImVec2 preview_container_size = ImGui::GetContentRegionAvail();
-                    ImGui::Image((ImTextureID)(intptr_t)tex_out, ImVec2(i2d_target_size[0] * image_preview_scale, i2d_target_size[1] * image_preview_scale));
+                    ImGui::Image((ImTextureID)(intptr_t)tex_out, ImVec2(ctx.target_size[0] * image_preview_scale, ctx.target_size[1] * image_preview_scale));
                     ImGui::EndChild();
                     p = ImGui::GetItemRectMin();
                     q = ImGui::GetItemRectMax();
@@ -365,8 +368,8 @@ int main(int argc, char** argv) {
                     if (ImGui::Button("100\%##Preview")) image_preview_scale = 1.0f;
                     ImGui::SameLine();
                     if (ImGui::Button("Fit##Preview")) {
-                        float image_preview_scale_w = preview_container_size.x / i2d_target_size[0];
-                        float image_preview_scale_h = preview_container_size.y / i2d_target_size[1];
+                        float image_preview_scale_w = preview_container_size.x / ctx.target_size[0];
+                        float image_preview_scale_h = preview_container_size.y / ctx.target_size[1];
                         image_preview_scale = image_preview_scale_w < image_preview_scale_h ? image_preview_scale_w : image_preview_scale_h;
                     } 
                     if (ImGui::BeginTabBar("##PreviewTabBar")) {
@@ -404,11 +407,11 @@ int main(int argc, char** argv) {
                         ImGui::TableNextColumn();
                         ImGui::SeparatorText("Curve Adjustment");
                         // Float Sliders
-                        image_preview_redraw |= ImGui::SliderFloat2("##IA_P0", i2d_bezier_cp, 0.0f, 1.0f, "%.2f");
-                        image_preview_redraw |= ImGui::SliderFloat2("##IA_P1", i2d_bezier_cp + 2, 0.0f, 1.0f, "%.2f");
+                        image_preview_redraw |= ImGui::SliderFloat2("##IA_P0", ctx.bezier_cp, 0.0f, 1.0f, "%.2f");
+                        image_preview_redraw |= ImGui::SliderFloat2("##IA_P1", ctx.bezier_cp + 2, 0.0f, 1.0f, "%.2f");
 
                         ImGui::TableNextColumn();
-                        image_preview_redraw |= ImGui::Bezier( "Linear", i2d_bezier_cp);
+                        image_preview_redraw |= ImGui::Bezier( "Linear", ctx.bezier_cp);
                         ImVec2 hist_area = ImGui::GetContentRegionAvail();
                         ImGui::PlotHistogram("##IA_Histogram", histogram, sizeof(histogram)/sizeof(float), 0, NULL, 0, 1.0f, ImVec2(hist_area.x, hist_area.y));
 
@@ -422,7 +425,7 @@ int main(int argc, char** argv) {
                         }
                         ImGui::PlotHistogram("##TM_Histogram", histogram, sizeof(histogram)/sizeof(float), 0, NULL, 0, 1.0f, ImVec2(400, 100));
                         ImGui::SetNextItemWidth(400);
-                        image_preview_redraw |= ImGui::SliderInt("##SI_Threshold", &i2d_threshold[0], 0, 255, "Threshold: %d");
+                        image_preview_redraw |= ImGui::SliderInt("##SI_Threshold", &(ctx.threshold[0]), 0, 255, "Threshold: %d");
                         ImGui::EndTabItem();
                     }
 
@@ -448,9 +451,9 @@ int main(int argc, char** argv) {
                 SDL_FreeSurface(surf_preview_ia);
                 SDL_FreeSurface(surf_preview_tm);
                 
-                surf_raw_preview = SDL_CreateRGBSurface(0, i2d_target_size[0], i2d_target_size[1], 32, 0, 0, 0, 0); // Scaled raw image
-                surf_preview_ia  = SDL_CreateRGBSurface(0, i2d_target_size[0], i2d_target_size[1], 32, 0, 0, 0, 0); // Post Image Adjustment
-                surf_preview_tm  = SDL_CreateRGBSurface(0, i2d_target_size[0], i2d_target_size[1], 32, 0, 0, 0, 0); // Post Tone Mapping
+                surf_raw_preview = SDL_CreateRGBSurface(0, ctx.target_size[0], ctx.target_size[1], 32, 0, 0, 0, 0); // Scaled raw image
+                surf_preview_ia  = SDL_CreateRGBSurface(0, ctx.target_size[0], ctx.target_size[1], 32, 0, 0, 0, 0); // Post Image Adjustment
+                surf_preview_tm  = SDL_CreateRGBSurface(0, ctx.target_size[0], ctx.target_size[1], 32, 0, 0, 0, 0); // Post Tone Mapping
 
                 SDL_FillRect(surf_raw_preview, NULL, SDL_MapRGB(surf_raw_preview->format, 0, 0, 0));
 
@@ -470,31 +473,31 @@ int main(int argc, char** argv) {
                 // Calculate desireable bonding box based on the i2d_resize_method
                 SDL_Rect destRect;
                 float srcAspectRatio = (float)img_src_width / (float)img_src_height;
-                float dstAspectRatio = (float)i2d_target_size[0] / (float)i2d_target_size[1];
+                float dstAspectRatio = (float)ctx.target_size[0] / (float)ctx.target_size[1];
 
-                if (i2d_resize_method==0) {
+                if (ctx.resize_method==0) {
                     // Zoom to fit, keep aspect ratio
                     if (srcAspectRatio > dstAspectRatio) goto I2D_RESIZE_FIT_HEIGHT;
                     else                                 goto I2D_RESIZE_FIT_WIDTH;
-                } else if (i2d_resize_method==1) {
+                } else if (ctx.resize_method==1) {
                     I2D_RESIZE_FIT_HEIGHT:
                     // Fit Height
-                    int newWidth = (int)(img_src_width * i2d_target_size[1] / img_src_height);
-                    int newHeight = i2d_target_size[1];
-                    destRect = { (i2d_target_size[0] - newWidth) / 2, 0, newWidth, newHeight };
-                } else if (i2d_resize_method==2) {
+                    int newWidth = (int)(img_src_width * ctx.target_size[1] / img_src_height);
+                    int newHeight = ctx.target_size[1];
+                    destRect = { (ctx.target_size[0] - newWidth) / 2, 0, newWidth, newHeight };
+                } else if (ctx.resize_method==2) {
                     I2D_RESIZE_FIT_WIDTH:
                     // Fit Width
-                    int newWidth = i2d_target_size[0];
-                    int newHeight = (int)(img_src_height * i2d_target_size[0] / img_src_width);
-                    destRect = { 0, (i2d_target_size[1] - newHeight) / 2, newWidth, newHeight };
-                } else if (i2d_resize_method==3) {
+                    int newWidth = ctx.target_size[0];
+                    int newHeight = (int)(img_src_height * ctx.target_size[0] / img_src_width);
+                    destRect = { 0, (ctx.target_size[1] - newHeight) / 2, newWidth, newHeight };
+                } else if (ctx.resize_method==3) {
                     // Stretch to fit
-                    destRect = { 0, 0, i2d_target_size[0], i2d_target_size[1] };
-                } else if (i2d_resize_method==4) {
+                    destRect = { 0, 0, ctx.target_size[0], ctx.target_size[1] };
+                } else if (ctx.resize_method==4) {
                     // Center
-                    destRect = { (i2d_target_size[0] - img_src_width) / 2, (i2d_target_size[1] - img_src_height) / 2, img_src_width, img_src_height };
-                } else if (i2d_resize_method==5) {
+                    destRect = { (ctx.target_size[0] - img_src_width) / 2, (ctx.target_size[1] - img_src_height) / 2, img_src_width, img_src_height };
+                } else if (ctx.resize_method==5) {
                     // Tile
                     // ...
                 }
@@ -502,11 +505,11 @@ int main(int argc, char** argv) {
                 SDL_BlitScaled(surf_raw, NULL, surf_raw_preview, &destRect);
 
                 Uint8 map[256];
-                for (int i = 0; i < 256; i++) map[i] = (Uint8)(255.0f * ImGui::BezierValue(i / 255.0f, i2d_bezier_cp));
+                for (int i = 0; i < 256; i++) map[i] = (Uint8)(255.0f * ImGui::BezierValue(i / 255.0f, ctx.bezier_cp));
 
                 // Update ia
-                for (int y = 0; y < i2d_target_size[1]; y++){
-                    for (int x = 0; x < i2d_target_size[0]; x++){
+                for (int y = 0; y < ctx.target_size[1]; y++){
+                    for (int x = 0; x < ctx.target_size[0]; x++){
                         Uint8 r, g, b, a;
                         Uint32 pixel = *(Uint32*)((Uint8*)surf_raw_preview->pixels + y * surf_raw_preview->pitch + x * surf_raw_preview->format->BytesPerPixel);
                         SDL_GetRGBA(pixel, surf_raw_preview->format, &r, &g, &b, &a);
@@ -518,13 +521,13 @@ int main(int argc, char** argv) {
                 }
 
                 // Update tm
-                for (int y = 0; y < i2d_target_size[1]; y++){
-                    for (int x = 0; x < i2d_target_size[0]; x++){
+                for (int y = 0; y < ctx.target_size[1]; y++){
+                    for (int x = 0; x < ctx.target_size[0]; x++){
                         Uint8 r, g, b, a;
                         Uint32 pixel = *(Uint32*)((Uint8*)surf_preview_ia->pixels + y * surf_preview_ia->pitch + x * surf_preview_ia->format->BytesPerPixel);
                         SDL_GetRGBA(pixel, surf_preview_ia->format, &r, &g, &b, &a);
                         Uint8 val = (Uint8)(0.299 * r + 0.587 * g + 0.114 * b);
-                        if (val > i2d_threshold[0]) val = 255;
+                        if (val > ctx.threshold[0]) val = 255;
                         else                        val = 0;
                         *(Uint32*)((Uint8*)surf_preview_tm->pixels + y * surf_preview_tm->pitch + x * 4) = SDL_MapRGB(surf_preview_tm->format, val, val, val);
                     }
@@ -564,8 +567,12 @@ int main(int argc, char** argv) {
         if (show_about)
         {
             ImGui::Begin("About", &show_about);   // Pass a pointer to our bool variable (the window will have a closing button that will clear the bool when clicked)
+            ImGui::Text("IMG2DISP");
             ImGui::Text("ImGui + SDL2 + SDL_Renderer");
+            ImGui::Text("Version alpha 0.1");
+            ImGui::Separator();
             ImGui::Text("Anhang Li (thelithcore@gmail.com)");
+            ImGui::Text("This software is licensed under the GNU GPL v3");
 
             if (ImGui::Button("Close"))
                 show_about = false;

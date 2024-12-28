@@ -17,7 +17,7 @@
 EXE = IMG2DISP
 IMGUI_DIR = ./imgui
 SRC_DIR  = ./src
-SOURCES = $(SRC_DIR)/bezier.cpp $(SRC_DIR)/main.cpp $(SRC_DIR)/image_io.cpp 
+SOURCES = $(SRC_DIR)/i2d_bezier.cpp $(SRC_DIR)/i2d_main.cpp $(SRC_DIR)/i2d_image_io.cpp $(SRC_DIR)/i2d_data.cpp
 SOURCES += $(SRC_DIR)/../ImGuiFileDialog/ImGuiFileDialog.cpp 
 
 SOURCES += $(IMGUI_DIR)/imgui.cpp $(IMGUI_DIR)/imgui_demo.cpp $(IMGUI_DIR)/imgui_draw.cpp $(IMGUI_DIR)/imgui_tables.cpp $(IMGUI_DIR)/imgui_widgets.cpp
