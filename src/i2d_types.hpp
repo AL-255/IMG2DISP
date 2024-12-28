@@ -22,6 +22,12 @@
 #include "i2d_config.hpp"
 
 typedef struct {
+    float* data;
+    int    width  = 5;
+    int    height = 5;
+} i2d_ed_kernel_t;
+
+typedef struct {
     bool  include_header = true;
     bool  byte_invert    = false;
     bool  r2l_scan       = false;
@@ -34,5 +40,9 @@ typedef struct {
     int   resize_method  = 0;
     int   target_size[2] = {I2D_PREVIEW_WIDTH,I2D_PREVIEW_HEIGHT};
     int   threshold[16];
+    int             dither_type     = 0;
+    i2d_ed_kernel_t dither_ed_kernel;
+    float           dither_strength = 0.5f;
+
     float bezier_cp[5]   = { 0.0f, 0.0f, 1.0f, 1.0f };
 } i2d_context_t;

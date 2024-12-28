@@ -21,4 +21,5 @@
 #include <SDL.h>    
 #include "i2d_types.hpp"
 
-uint8_t process(SDL_Surface* src, uint8_t* dst, i2d_context_t* ctx);
+uint8_t i2d_commit(SDL_Surface* src, uint8_t* dst, i2d_context_t* ctx);
+uint8_t i2d_write_c_array(const char* filename, uint8_t* data, i2d_context_t* ctx);

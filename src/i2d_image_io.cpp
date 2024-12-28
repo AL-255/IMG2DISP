@@ -20,15 +20,13 @@
 #include <utility>
 #include "i2d_fmt_il.h"
 #include "stb_image.h"
+#include "i2d_types.hpp"
 
-int i2d_fmt_il_read(SDL_Renderer* renderer, SDL_Texture** dst_ptr\
-    , int i2d_scan_mode,int i2d_bpp_mode \
-    , int i2d_byte_invert, int i2d_msb_first \
-    , int i2d_r2l_scan, int i2d_b2t_scan ) {
+int i2d_fmt_il_read(SDL_Renderer* renderer, SDL_Texture** dst_ptr, i2d_context_t* ctx ) {
     
     int id = 0;
-    id += i2d_scan_mode*2;
-    id += i2d_byte_invert;
+    id += ctx->scan_mode*2;
+    id += ctx->byte_invert;
 
     uint8_t* raw_data = const_cast<uint8_t*>(fmt_il_list[id]);
     size_t raw_size   = fmt_il_list_len[id];
@@ -40,7 +38,7 @@ int i2d_fmt_il_read(SDL_Renderer* renderer, SDL_Texture** dst_ptr\
         return -1;
     }
     // If R2L scan mode, horizontal flip the image; if B2T scan mode, vertical flip the image
-    if (i2d_r2l_scan) {
+    if (ctx->r2l_scan) {
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width / 2; x++) {
                 for (int c = 0; c < channels; c++) {
@@ -51,7 +49,7 @@ int i2d_fmt_il_read(SDL_Renderer* renderer, SDL_Texture** dst_ptr\
             }
         }
     }
-    if (i2d_b2t_scan) {
+    if (ctx->b2t_scan) {
         for (int y = 0; y < height / 2; y++) {
             for (int x = 0; x < width; x++) {
                 for (int c = 0; c < channels; c++) {

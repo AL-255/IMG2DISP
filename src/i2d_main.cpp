@@ -15,8 +15,17 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
+
+#include "stb_image.h"
+#include "stb_image_resize2.h"
+
 #include "i2d_config.hpp"
 #include "i2d_types.hpp"
+#include "i2d_bezier.hpp"
+#include "i2d_image_io.hpp"
+#include "i2d_dither.hpp"
 
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
@@ -24,18 +33,9 @@
 #include <stdio.h>
 #include <SDL.h>
 
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_RESIZE_IMPLEMENTATION
 
-#include "stb_image.h"
-#include "stb_image_resize2.h"
 #include "ini.h"
-
-
-#include "i2d_image_io.hpp"
-#include "i2d_bezier.hpp"
 #include "ImGuiFileDialog.h"
-
 
 #if !SDL_VERSION_ATLEAST(2,0,17)
 #error This backend requires SDL 2.0.17+ because of SDL_RenderGeometry() function
@@ -61,6 +61,7 @@ int main(int argc, char** argv) {
     if (window == nullptr)  {printf("Error: SDL_CreateWindow(): %s\n", SDL_GetError());return -1;}
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_ACCELERATED);
     if (renderer == nullptr){SDL_Log("Error creating SDL_Renderer!");                  return -1;}
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0"); // Nearest Neighbor 
 
     SDL_RendererInfo info;
     SDL_GetRendererInfo(renderer, &info);
@@ -104,15 +105,18 @@ int main(int argc, char** argv) {
     SDL_Surface* surf_raw_preview;
     SDL_Surface* surf_preview_ia;
     SDL_Surface* surf_preview_tm;
+    SDL_Surface* surf_preview_di;
 
     // Fill tex_raw_preview with 0,0,0
     surf_raw  = SDL_CreateRGBSurface(0, 1, 1, 32, 0, 0, 0, 0); // Not useful
     surf_raw_preview = SDL_CreateRGBSurface(0, I2D_PREVIEW_WIDTH, I2D_PREVIEW_HEIGHT, 32, 0, 0, 0, 0);
     surf_preview_ia  = SDL_CreateRGBSurface(0, I2D_PREVIEW_WIDTH, I2D_PREVIEW_HEIGHT, 32, 0, 0, 0, 0);
-    surf_preview_tm   = SDL_CreateRGBSurface(0, I2D_PREVIEW_WIDTH, I2D_PREVIEW_HEIGHT, 32, 0, 0, 0, 0);
+    surf_preview_tm  = SDL_CreateRGBSurface(0, I2D_PREVIEW_WIDTH, I2D_PREVIEW_HEIGHT, 32, 0, 0, 0, 0);
+    surf_preview_di  = SDL_CreateRGBSurface(0, I2D_PREVIEW_WIDTH, I2D_PREVIEW_HEIGHT, 32, 0, 0, 0, 0);
     SDL_FillRect(surf_raw_preview, NULL, SDL_MapRGB(surf_raw_preview->format, 0, 0, 0));
     SDL_FillRect(surf_preview_ia,  NULL, SDL_MapRGB(surf_preview_ia->format, 0, 0, 0));
     SDL_FillRect(surf_preview_tm,  NULL, SDL_MapRGB(surf_preview_tm->format, 0, 0, 0));
+    SDL_FillRect(surf_preview_di,  NULL, SDL_MapRGB(surf_preview_di->format, 0, 0, 0));
     tex_out  = SDL_CreateTextureFromSurface(renderer, surf_preview_ia);
 
     int  img_src_width        = -1;
@@ -138,7 +142,7 @@ int main(int argc, char** argv) {
     i2d_context_t ctx;
     for (int i = 0; i < 16; i++) ctx.threshold[i] =0;
 
-    i2d_fmt_il_read(renderer, &tex_fmt_preview, ctx.scan_mode, ctx.bpp_mode, ctx.byte_invert, ctx.msb_first, ctx.r2l_scan, ctx.b2t_scan);
+    i2d_fmt_il_read(renderer, &tex_fmt_preview, &ctx);
 
     // Main loop
     bool done = false;
@@ -297,7 +301,7 @@ int main(int argc, char** argv) {
                 redraw_fmt_il |= ImGui::Checkbox("Pad to Full Bytes",  &(ctx.pad_to_full));
                 
                 if (redraw_fmt_il){
-                    i2d_fmt_il_read(renderer, &tex_fmt_preview, ctx.scan_mode, ctx.bpp_mode, ctx.byte_invert, ctx.msb_first, ctx.r2l_scan, ctx.b2t_scan);
+                    i2d_fmt_il_read(renderer, &tex_fmt_preview, &ctx);
                 }
                 // ImGui::Text("Bits Per Pixel");
                 // ImGui::Combo("##BPP", &i2d_bpp_mode, i2d_bpp_alist, IM_ARRAYSIZE(i2d_bpp_alist));
@@ -357,6 +361,19 @@ int main(int argc, char** argv) {
                         ImGuiWindowFlags_AlwaysHorizontalScrollbar \
                     | ImGuiWindowFlags_AlwaysVerticalScrollbar );
                     ImVec2 preview_container_size = ImGui::GetContentRegionAvail();
+
+                    // Resize surf_out to fit preview_container_size
+                    // SDL_Surface* surf_out_scaled = SDL_CreateRGBSurface(0, ctx.target_size[0]*image_preview_scale, ctx.target_size[1]*image_preview_scale, 32, 0, 0, 0, 0);
+                    // switch (image_preview_mode){
+                    //     case 0: SDL_BlitScaled(surf_preview_ia, NULL, surf_out_scaled, NULL); break;
+                    //     case 1: SDL_BlitScaled(surf_preview_tm, NULL, surf_out_scaled, NULL); break;
+                    //     case 2: SDL_BlitScaled(surf_preview_di, NULL, surf_out_scaled, NULL); break;
+                    // }
+                    // // SDL_BlitScaled(surf_preview_ia, NULL, surf_out_scaled, NULL);
+                    // tex_out_scaled = SDL_CreateTextureFromSurface(renderer, surf_out_scaled);
+                    // ImGui::Image((ImTextureID)(intptr_t)tex_out_scaled, ImVec2(ctx.target_size[0] * image_preview_scale, ctx.target_size[1] * image_preview_scale));
+                    // SDL_FreeSurface(surf_out_scaled);
+
                     ImGui::Image((ImTextureID)(intptr_t)tex_out, ImVec2(ctx.target_size[0] * image_preview_scale, ctx.target_size[1] * image_preview_scale));
                     ImGui::EndChild();
                     p = ImGui::GetItemRectMin();
@@ -387,7 +404,13 @@ int main(int argc, char** argv) {
                             image_preview_mode = 1;
                             ImGui::EndTabItem();
                         }
-                        // if (ImGui::BeginTabItem("Dithered")) {
+                        if (ImGui::BeginTabItem("Dithered")) {
+                            if (image_preview_mode != 2){
+                                image_preview_redraw = true;
+                            }
+                            image_preview_mode = 2;
+                            ImGui::EndTabItem();
+                        }
                         // Not yet implemented
                         ImGui::EndTabBar();
                     }
@@ -434,7 +457,8 @@ int main(int argc, char** argv) {
                             i2d_pipe_state = I2D_STATE_DITHERING;
                             image_preview_redraw = true;
                         }
-                        ImGui::Text("Not yet implemented");
+                        image_preview_redraw |= ImGui::SliderFloat("##DI_Strength", &(ctx.dither_strength), 0.0f, 1.0f, "Strength: %.2f");
+                        ImGui::Text("Not yet fully implemented");
                         ImGui::EndTabItem();
                     }
 
@@ -532,11 +556,14 @@ int main(int argc, char** argv) {
                         *(Uint32*)((Uint8*)surf_preview_tm->pixels + y * surf_preview_tm->pitch + x * 4) = SDL_MapRGB(surf_preview_tm->format, val, val, val);
                     }
                 }
-            
+                // Update dithering
+                i2d_dither(surf_preview_ia, surf_preview_di, &ctx);
+                
                 switch (image_preview_mode){
                     case 0: tex_out = SDL_CreateTextureFromSurface(renderer, surf_preview_ia); break;
                     case 1: tex_out = SDL_CreateTextureFromSurface(renderer, surf_preview_tm); break;
-                    case 2: break;
+                    case 2: tex_out = SDL_CreateTextureFromSurface(renderer, surf_preview_di); break;
+                    default: break;
                 }
                 
                 // Calculate histogram from surf_preview_ia
