@@ -26,13 +26,13 @@
 #include "i2d_bezier.hpp"
 #include "i2d_image_io.hpp"
 #include "i2d_dither.hpp"
+#include "i2d_data.hpp"
 
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
 #include <stdio.h>
 #include <SDL.h>
-
 
 #include "ini.h"
 #include "ImGuiFileDialog.h"
@@ -86,7 +86,7 @@ int main(int argc, char** argv) {
 
 
     // Constants
-    static const char* i2d_output_type_alist[]   = { "C array (*.c)"};
+    static const char* i2d_output_type_alist[]   = { "C array (*.c)", "Binary (*.bin)"};
     static const char* i2d_scan_mode_alist[]     = { "Horizontal Scan", "Vertical Scan", "Data Hor, Byte Ver", "Data Ver, Byte Hor"};
     // static const char* i2d_bpp_alist[]           = { "Monochrome", "4-Index"};
     static const char* i2d_resize_method_alist[] = { "Fit", "Fit Height", "Fit Width", "Stretch", "Center"};
@@ -204,8 +204,10 @@ int main(int argc, char** argv) {
                         char* filter;
                         if (ctx.output_type == 0) {
                             filter = (char*)"C array (*.c){.c}";
+                        } else if(ctx.output_type == 1) {
+                            filter = (char*)"Binary (*.bin){.bin}";
                         } else {
-                            // ...
+                            filter = (char*)"All Files{*.*}";
                         }
                         ImGuiFileDialog::Instance()->OpenDialog("SaveDataDlgKey", "Save Data", filter, config);
                     }
@@ -361,18 +363,6 @@ int main(int argc, char** argv) {
                         ImGuiWindowFlags_AlwaysHorizontalScrollbar \
                     | ImGuiWindowFlags_AlwaysVerticalScrollbar );
                     ImVec2 preview_container_size = ImGui::GetContentRegionAvail();
-
-                    // Resize surf_out to fit preview_container_size
-                    // SDL_Surface* surf_out_scaled = SDL_CreateRGBSurface(0, ctx.target_size[0]*image_preview_scale, ctx.target_size[1]*image_preview_scale, 32, 0, 0, 0, 0);
-                    // switch (image_preview_mode){
-                    //     case 0: SDL_BlitScaled(surf_preview_ia, NULL, surf_out_scaled, NULL); break;
-                    //     case 1: SDL_BlitScaled(surf_preview_tm, NULL, surf_out_scaled, NULL); break;
-                    //     case 2: SDL_BlitScaled(surf_preview_di, NULL, surf_out_scaled, NULL); break;
-                    // }
-                    // // SDL_BlitScaled(surf_preview_ia, NULL, surf_out_scaled, NULL);
-                    // tex_out_scaled = SDL_CreateTextureFromSurface(renderer, surf_out_scaled);
-                    // ImGui::Image((ImTextureID)(intptr_t)tex_out_scaled, ImVec2(ctx.target_size[0] * image_preview_scale, ctx.target_size[1] * image_preview_scale));
-                    // SDL_FreeSurface(surf_out_scaled);
 
                     ImGui::Image((ImTextureID)(intptr_t)tex_out, ImVec2(ctx.target_size[0] * image_preview_scale, ctx.target_size[1] * image_preview_scale));
                     ImGui::EndChild();
@@ -659,14 +649,24 @@ int main(int argc, char** argv) {
             if (ImGuiFileDialog::Instance()->IsOk()) {
                 std::string filePathName = ImGuiFileDialog::Instance()->GetFilePathName();
                 std::string filePath = ImGuiFileDialog::Instance()->GetCurrentPath();
-                // Save data to file
-                FILE* f = fopen(filePathName.c_str(), "wb");
-                if (f == NULL) {
-                    fprintf(stderr, "Failed to open file: %s\n", filePathName.c_str());
-                    return false;
+                // Convert image to data
+                uint8_t* data_out = i2d_commit(surf_preview_di, &ctx);
+                if (data_out == NULL) {
+                    fprintf(stderr, "Failed to allocate output buffer\n");
+                    goto SAVE_DATA_DONE;
                 }
-                // Write data to file
-                fclose(f);
+                // Save data to file
+                if(ctx.output_type==0) {
+                    fprintf(stdout, "Saving C array file: %s\n", filePathName.c_str());
+                    i2d_write_c_array(filePathName.c_str(), data_out, &ctx);
+                } else if(ctx.output_type==1) {
+                    fprintf(stdout, "Saving binary file: %s\n", filePathName.c_str());
+                    i2d_write_bin(filePathName.c_str(), data_out, &ctx);
+                } else {
+                    fprintf(stderr, "Output type not supported\n");
+                }
+                IM_FREE(data_out);
+                SAVE_DATA_DONE:;
             }
             ImGuiFileDialog::Instance()->Close();
         }
