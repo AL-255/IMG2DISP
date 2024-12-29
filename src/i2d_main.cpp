@@ -464,10 +464,13 @@ int main(int argc, char** argv) {
                 SDL_FreeSurface(surf_raw_preview);
                 SDL_FreeSurface(surf_preview_ia);
                 SDL_FreeSurface(surf_preview_tm);
+                SDL_FreeSurface(surf_preview_di);
+
                 
                 surf_raw_preview = SDL_CreateRGBSurface(0, ctx.target_size[0], ctx.target_size[1], 32, 0, 0, 0, 0); // Scaled raw image
                 surf_preview_ia  = SDL_CreateRGBSurface(0, ctx.target_size[0], ctx.target_size[1], 32, 0, 0, 0, 0); // Post Image Adjustment
                 surf_preview_tm  = SDL_CreateRGBSurface(0, ctx.target_size[0], ctx.target_size[1], 32, 0, 0, 0, 0); // Post Tone Mapping
+                surf_preview_di  = SDL_CreateRGBSurface(0, ctx.target_size[0], ctx.target_size[1], 32, 0, 0, 0, 0); // Post Dithering
 
                 SDL_FillRect(surf_raw_preview, NULL, SDL_MapRGB(surf_raw_preview->format, 0, 0, 0));
 
